@@ -7,6 +7,7 @@ const schema = z.object({
   AUTH_GOOGLE_ID: z.string().min(1),
   AUTH_GOOGLE_SECRET: z.string().min(1),
   TOKEN_ENCRYPTION_KEY: z.string().min(1),
+  STORAGE_DIR: z.string().min(1).default("/var/lib/meetingnotes/recordings"),
 });
 
 let cached: z.infer<typeof schema> | undefined;

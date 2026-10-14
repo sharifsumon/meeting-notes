@@ -16,14 +16,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     .orderBy(desc(calendars.isPrimary), asc(calendars.name));
 
   return (
-    <main className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Calendars</h1>
-        <p className="text-zinc-500">Choose which calendars MinuteFlow watches for meetings.</p>
+    <main className="flex w-full max-w-[1120px] flex-col gap-6 px-4 pt-7 pb-12 md:px-8">
+      <div>
+        <h1 className="text-[28px] font-extrabold tracking-[-0.02em]">Settings</h1>
+        <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches for meetings.</p>
       </div>
 
       {reconnect && (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span>We lost access to your Google Calendar. Reconnect and make sure calendar access is ticked.</span>
           <form
             action={async () => {
@@ -39,17 +39,19 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       )}
 
       {rows.length === 0 ? (
-        <p className="text-zinc-500">No calendars yet. Open Meetings and press Sync now.</p>
+        <p className="text-muted">No calendars yet. Open Meetings and press Sync calendar.</p>
       ) : (
-        <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="flex flex-col gap-3">
+          <h2 className="section-label">Google Calendar</h2>
+          <ul className="card divide-y divide-line-soft">
           {rows.map((c) => (
-            <li key={c.id} className="flex items-center justify-between gap-4 px-4 py-3">
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
               <div className="min-w-0">
-                <p className="truncate font-medium">
+                <p className="truncate text-[15px] font-bold">
                   {c.name}
-                  {c.isPrimary && <span className="ml-2 text-xs font-normal text-zinc-500">Primary</span>}
+                  {c.isPrimary && <span className="pill ml-2 bg-accent-soft text-xs text-accent">Primary</span>}
                 </p>
-                <p className="text-sm text-zinc-500">
+                <p className="mt-0.5 text-sm text-muted">
                   Google Calendar
                   {c.lastSyncedAt && ` · synced ${c.lastSyncedAt.toISOString().slice(0, 16).replace("T", " ")} UTC`}
                 </p>
@@ -57,7 +59,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               <CalendarToggle calendarId={c.id} enabled={c.enabled} />
             </li>
           ))}
-        </ul>
+          </ul>
+        </section>
       )}
     </main>
   );

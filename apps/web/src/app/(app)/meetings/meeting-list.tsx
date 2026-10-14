@@ -1,114 +1,111 @@
 "use client";
 
-import { useOptimistic, useState, useSyncExternalStore, useTransition } from "react";
-import type { MeetingPlatform } from "@/lib/meeting-links";
-import { setRecordEnabled } from "../actions";
+import Link from "next/link";
+import { useSyncExternalStore } from "react";
+import { Icon, PlatformChip, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui";
+import type { MeetingRow } from "@/lib/meetings";
+import { RecordSwitch } from "./record-switch";
 
-export type MeetingRow = {
-  id: string;
-  title: string;
-  startsAt: string;
-  endsAt: string;
-  meetingUrl: string | null;
-  platform: MeetingPlatform | null;
-  recordEnabled: boolean;
-  calendarName: string;
-};
-
-const PLATFORM_LABEL: Record<MeetingPlatform, string> = {
-  google_meet: "Google Meet",
-  microsoft_teams: "Teams",
-  zoom: "Zoom",
-  webex: "Webex",
-  other: "Video call",
-};
-
-// Platforms the bot can join today.
-const SUPPORTED: ReadonlySet<MeetingPlatform> = new Set(["google_meet"]);
-
-const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" });
+const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" });
+const longDayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
 const subscribeNoop = () => () => {};
 
+/** Dates are shown in the viewer's time zone, which the server doesn't know: render on the client only. */
+export function useIsClient() {
+  return useSyncExternalStore(subscribeNoop, () => true, () => false);
+}
+
+function dayKey(d: Date) {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function dayLabel(d: Date) {
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (dayKey(d) === dayKey(today)) return "Today";
+  if (dayKey(d) === dayKey(tomorrow)) return "Tomorrow";
+  if (dayKey(d) === dayKey(yesterday)) return "Yesterday";
+  return dayFmt.format(d);
+}
+
+export function TodayLine({ meetings }: { meetings: MeetingRow[] }) {
+  const isClient = useIsClient();
+  if (!isClient) return <p className="mt-1.5 text-[15px] text-muted">&nbsp;</p>;
+  const today = dayKey(new Date());
+  const n = meetings.filter((m) => dayKey(new Date(m.startsAt)) === today).length;
+  return (
+    <p className="mt-1.5 text-[15px] text-muted">
+      {longDayFmt.format(new Date())}
+      {meetings.length > 0 && ` · ${n === 0 ? "no" : n} meeting${n === 1 ? "" : "s"} today`}
+    </p>
+  );
+}
+
 export function MeetingList({ meetings }: { meetings: MeetingRow[] }) {
-  // Dates are shown in the viewer's time zone, which the server doesn't know: render on the client only.
-  const isClient = useSyncExternalStore(subscribeNoop, () => true, () => false);
+  const isClient = useIsClient();
   if (!isClient) return null;
 
-  // Group by the viewer's local day.
-  const groups = new Map<string, MeetingRow[]>();
+  const groups = new Map<string, { label: string; items: MeetingRow[] }>();
   for (const m of meetings) {
-    const day = dayFmt.format(new Date(m.startsAt));
-    groups.set(day, [...(groups.get(day) ?? []), m]);
+    const d = new Date(m.startsAt);
+    const key = dayKey(d);
+    const g = groups.get(key) ?? { label: dayLabel(d), items: [] };
+    g.items.push(m);
+    groups.set(key, g);
   }
 
   return (
-    <div className="space-y-8">
-      {[...groups].map(([day, items]) => (
-        <section key={day} className="space-y-2">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">{day}</h2>
-          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
-            {items.map((m) => (
-              <MeetingItem key={m.id} meeting={m} />
-            ))}
-          </ul>
+    <div className="flex flex-col gap-6">
+      {[...groups].map(([key, g]) => (
+        <section key={key} aria-labelledby={`day-${key}`} className="flex flex-col gap-3">
+          <h2 id={`day-${key}`} className="section-label">
+            {g.label}
+          </h2>
+          {g.items.map((m) => (
+            <MeetingCard key={m.id} meeting={m} />
+          ))}
         </section>
       ))}
     </div>
   );
 }
 
-function MeetingItem({ meeting: m }: { meeting: MeetingRow }) {
-  const [, startTransition] = useTransition();
-  const [record, setRecordOptimistic] = useOptimistic(m.recordEnabled);
-  const [error, setError] = useState<string>();
-  const supported = m.platform !== null && SUPPORTED.has(m.platform);
+function MeetingCard({ meeting: m }: { meeting: MeetingRow }) {
+  const supported = m.platform !== null && SUPPORTED_PLATFORMS.has(m.platform);
+  const ended = new Date(m.endsAt) < new Date();
+  // The switch only makes sense before the bot has started.
+  const canToggle = supported && !ended && (m.status === null || m.status === "scheduled");
 
   return (
-    <li className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="min-w-0">
-        <p className="truncate font-medium">{m.title}</p>
-        <p className="text-sm text-zinc-500">
-          {timeFmt.format(new Date(m.startsAt))} – {timeFmt.format(new Date(m.endsAt))}
-          {" · "}
-          {m.platform ? (
-            <a href={m.meetingUrl ?? undefined} target="_blank" rel="noreferrer" className="hover:underline">
-              {PLATFORM_LABEL[m.platform]}
-            </a>
-          ) : (
-            "No video link"
-          )}
-          {" · "}
-          {m.calendarName}
-        </p>
+    <article className="card flex flex-wrap items-center gap-x-6 gap-y-4 px-5 py-[18px]">
+      <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h3 className="text-[17px] font-bold tracking-[-0.01em]">
+            <Link href={`/meetings/${m.id}`} className="hover:underline">
+              {m.title}
+            </Link>
+          </h3>
+          <PlatformChip platform={m.platform} />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <span className="pill border border-accent-soft bg-sky-50 font-medium text-accent">{m.calendarName}</span>
+          <StatusPill status={m.status} recordEnabled={m.recordEnabled && !ended} />
+          {m.platform && !supported && <span className="pill bg-slate-100 font-medium text-muted">Bot coming soon</span>}
+        </div>
       </div>
-      {supported ? (
-        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm">
-          {error && <span className="text-xs text-red-600">{error}</span>}
-          <input
-            type="checkbox"
-            checked={record}
-            onChange={(e) => {
-              const next = e.target.checked;
-              setError(undefined);
-              startTransition(async () => {
-                setRecordOptimistic(next);
-                try {
-                  await setRecordEnabled(m.id, next);
-                } catch {
-                  // Most often the app was updated while this page was open.
-                  setError("Couldn't save. Reload the page and try again.");
-                }
-              });
-            }}
-            className="size-4 accent-zinc-900 dark:accent-white"
-          />
-          Record
-        </label>
-      ) : (
-        <span className="shrink-0 text-xs text-zinc-400">{m.platform ? "Coming soon" : ""}</span>
-      )}
-    </li>
+      <span className="inline-flex items-center gap-1.5 text-sm whitespace-nowrap text-ink-2">
+        <Icon name="clock" size={16} className="text-muted" />
+        {timeFmt.format(new Date(m.startsAt))} – {timeFmt.format(new Date(m.endsAt))}
+      </span>
+      <div className="ml-auto flex flex-none flex-wrap items-center gap-2">
+        {canToggle && <RecordSwitch meetingId={m.id} enabled={m.recordEnabled} />}
+        <Link href={`/meetings/${m.id}`} className="btn-dark">
+          Open Details
+        </Link>
+      </div>
+    </article>
   );
 }

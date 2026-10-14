@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Icon } from "@/components/ui";
 import { syncNow } from "../actions";
 
 export function SyncButton() {
@@ -18,9 +19,10 @@ export function SyncButton() {
             setError((await syncNow()).error);
           })
         }
-        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        className="btn-outline"
       >
-        {pending ? "Syncing…" : "Sync now"}
+        <Icon name="refresh" size={16} className={pending ? "animate-spin" : undefined} />
+        {pending ? "Syncing…" : "Sync calendar"}
       </button>
     </div>
   );
