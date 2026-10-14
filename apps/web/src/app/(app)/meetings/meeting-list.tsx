@@ -1,6 +1,6 @@
 "use client";
 
-import { useOptimistic, useSyncExternalStore, useTransition } from "react";
+import { useOptimistic, useState, useSyncExternalStore, useTransition } from "react";
 import type { MeetingPlatform } from "@/lib/meeting-links";
 import { setRecordEnabled } from "../actions";
 
@@ -62,6 +62,7 @@ export function MeetingList({ meetings }: { meetings: MeetingRow[] }) {
 function MeetingItem({ meeting: m }: { meeting: MeetingRow }) {
   const [, startTransition] = useTransition();
   const [record, setRecordOptimistic] = useOptimistic(m.recordEnabled);
+  const [error, setError] = useState<string>();
   const supported = m.platform !== null && SUPPORTED.has(m.platform);
 
   return (
@@ -84,14 +85,21 @@ function MeetingItem({ meeting: m }: { meeting: MeetingRow }) {
       </div>
       {supported ? (
         <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm">
+          {error && <span className="text-xs text-red-600">{error}</span>}
           <input
             type="checkbox"
             checked={record}
             onChange={(e) => {
               const next = e.target.checked;
+              setError(undefined);
               startTransition(async () => {
                 setRecordOptimistic(next);
-                await setRecordEnabled(m.id, next);
+                try {
+                  await setRecordEnabled(m.id, next);
+                } catch {
+                  // Most often the app was updated while this page was open.
+                  setError("Couldn't save. Reload the page and try again.");
+                }
               });
             }}
             className="size-4 accent-zinc-900 dark:accent-white"
