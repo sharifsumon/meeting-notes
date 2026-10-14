@@ -115,10 +115,9 @@ export const meetings = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    calendarId: uuid("calendar_id")
-      .notNull()
-      .references(() => calendars.id, { onDelete: "cascade" }),
-    externalEventId: text("external_event_id").notNull(),
+    // Null for meetings started from a pasted link ("Send bot now").
+    calendarId: uuid("calendar_id").references(() => calendars.id, { onDelete: "cascade" }),
+    externalEventId: text("external_event_id"),
     title: text("title").notNull(),
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),

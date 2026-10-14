@@ -15,6 +15,13 @@
       "when": 1791969800053,
       "tag": "0001_bot_session_per_meeting",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791971995190,
+      "tag": "0002_adhoc_meetings",
+      "breakpoints": true
     }
   ]
 }

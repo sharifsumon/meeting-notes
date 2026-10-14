@@ -1,5 +1,5 @@
 import { calendars, meetings } from "@minuteflow/db";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, or } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
@@ -7,6 +7,7 @@ import { GoogleReconnectRequired } from "@/lib/google/client";
 import { requireUserId } from "@/lib/session";
 import { syncAll } from "@/lib/sync";
 import { MeetingList, type MeetingRow } from "./meeting-list";
+import { SendBotForm } from "./send-bot-form";
 import { SyncButton } from "./sync-button";
 
 export default async function MeetingsPage() {
@@ -35,11 +36,11 @@ export default async function MeetingsPage() {
       calendarName: calendars.name,
     })
     .from(meetings)
-    .innerJoin(calendars, eq(meetings.calendarId, calendars.id))
+    .leftJoin(calendars, eq(meetings.calendarId, calendars.id))
     .where(
       and(
         eq(meetings.userId, userId),
-        eq(calendars.enabled, true),
+        or(isNull(meetings.calendarId), eq(calendars.enabled, true)),
         eq(meetings.cancelled, false),
         gte(meetings.endsAt, new Date()),
       ),
@@ -49,6 +50,7 @@ export default async function MeetingsPage() {
 
   const data: MeetingRow[] = rows.map((r) => ({
     ...r,
+    calendarName: r.calendarName ?? "Sent from a link",
     startsAt: r.startsAt.toISOString(),
     endsAt: r.endsAt.toISOString(),
   }));
@@ -59,6 +61,7 @@ export default async function MeetingsPage() {
         <h1 className="text-2xl font-semibold">Upcoming meetings</h1>
         <SyncButton />
       </div>
+      <SendBotForm />
       {data.length === 0 ? (
         <p className="text-zinc-500">
           No upcoming meetings in the next two weeks. Check which calendars are turned on in{" "}
