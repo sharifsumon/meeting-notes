@@ -36,6 +36,8 @@ With a profile the bot joins under the account's name and records one meeting at
 
 Run it locally with `CHROME_PATH=/path/to/chrome pnpm --filter @minuteflow/bot start`. Its tests drive a real browser against a fake Meet page (`apps/bot/test/fake-meet.html`) when `CHROME_PATH` is set.
 
+See [docs/architecture.md](docs/architecture.md) for how far the self-hosted bot scales and the plan for swapping it for a bot service or the platforms' recording APIs.
+
 ## Local development
 
 Needs Node 22+, pnpm (`corepack enable`), and PostgreSQL.
