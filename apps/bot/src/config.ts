@@ -8,6 +8,9 @@ const schema = z.object({
   CHROME_PATH: z.string().min(1),
   // Meet is more likely to let a visible browser in; run under Xvfb on the server.
   BOT_HEADLESS: z.enum(["true", "false"]).default("false"),
+  // Chrome profile signed in to the bot's own Google account (see `pnpm login`).
+  // Meet refuses many signed-out guests; when set, the bot joins as that account.
+  BOT_PROFILE_DIR: z.string().min(1).optional(),
   // How many meetings this worker records at once (each is one browser).
   BOT_CONCURRENCY: z.coerce.number().int().positive().default(2),
   // Join this many seconds before the scheduled start.

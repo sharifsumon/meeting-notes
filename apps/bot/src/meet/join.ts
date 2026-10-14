@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from "playwright-core";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { config, headless } from "../config";
 import { installAudioCapture } from "./capture";
 
@@ -36,8 +36,24 @@ const BROWSER_ARGS = [
   "--lang=en-US",
 ];
 
-export async function launchBrowser(): Promise<Browser> {
-  return chromium.launch({ executablePath: config.CHROME_PATH, headless, args: BROWSER_ARGS });
+/**
+ * Opens a browser context: the signed-in bot profile when BOT_PROFILE_DIR is set
+ * (one meeting at a time, since a profile can't be shared), otherwise a fresh guest.
+ */
+export async function launchContext(): Promise<BrowserContext> {
+  const options = { permissions: ["microphone", "camera"], locale: "en-US" };
+  if (config.BOT_PROFILE_DIR) {
+    return chromium.launchPersistentContext(config.BOT_PROFILE_DIR, {
+      ...options,
+      executablePath: config.CHROME_PATH,
+      headless,
+      args: BROWSER_ARGS,
+    });
+  }
+  const browser = await chromium.launch({ executablePath: config.CHROME_PATH, headless, args: BROWSER_ARGS });
+  const context = await browser.newContext(options);
+  context.on("close", () => void browser.close().catch(() => {}));
+  return context;
 }
 
 /** Adds the hooks a page needs before it loads. Shared with tests. */
@@ -60,9 +76,8 @@ export function withEnglishUi(url: string) {
  */
 export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: Date; leftAt: Date; reason: string }> {
   const log = opts.log ?? console.log;
-  const browser = await launchBrowser();
+  const context = await launchContext();
   try {
-    const context = await browser.newContext({ permissions: ["microphone", "camera"], locale: "en-US" });
     const page = await context.newPage();
     await preparePage(page, opts.onChunk);
 
@@ -85,9 +100,13 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
     await page.getByRole("button", { name: /leave call/i }).click({ timeout: 5_000 }).catch(() => {});
     return { joinedAt, leftAt: new Date(), reason };
   } finally {
-    await browser.close().catch(() => {});
+    await context.close().catch(() => {});
   }
 }
+
+const BLOCKED_MESSAGE = config.BOT_PROFILE_DIR
+  ? "Google Meet refused to let the bot in"
+  : "Google Meet refused to let the bot in as a signed-out guest (sign the bot in: see README)";
 
 async function joinFromLobby(page: Page, botName: string, admitTimeoutMs: number, log: (m: string) => void) {
   const blocked = page.getByText(/you can't join this video call|unable to join this call/i);
@@ -98,15 +117,19 @@ async function joinFromLobby(page: Page, botName: string, admitTimeoutMs: number
     await page.getByRole("button", { name }).first().click({ timeout: 10_000 }).catch(() => {});
   }
 
+  // Guests type a name; a signed-in bot joins under its Google account name instead.
   const nameBox = page.getByRole("textbox", { name: /your name/i });
-  try {
-    await nameBox.fill(botName, { timeout: 30_000 });
-  } catch {
-    if (await blocked.isVisible()) throw new JoinFailed("Google Meet refused to let the bot in", "blocked");
-    throw new JoinFailed("Could not find the name field on the Meet lobby page", "error");
-  }
+  const joinButton = page.getByRole("button", { name: /ask to join|join now/i });
+  const lobby = await Promise.race([
+    nameBox.waitFor({ timeout: 30_000 }).then(() => "guest" as const),
+    joinButton.waitFor({ timeout: 30_000 }).then(() => "signed-in" as const),
+    blocked.waitFor({ timeout: 30_000 }).then(() => "blocked" as const),
+  ]).catch(() => "unknown" as const);
+  if (lobby === "blocked") throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
+  if (lobby === "unknown") throw new JoinFailed("Could not find the join button on the Meet lobby page", "error");
+  if (lobby === "guest") await nameBox.fill(botName);
 
-  await page.getByRole("button", { name: /ask to join|join now/i }).click({ timeout: 15_000 });
+  await joinButton.click({ timeout: 15_000 });
   log("Asked to join; waiting to be admitted");
 
   const inCall = page.getByRole("button", { name: /leave call/i });
@@ -118,7 +141,7 @@ async function joinFromLobby(page: Page, botName: string, admitTimeoutMs: number
   ]).catch(() => "timeout" as const);
 
   if (outcome === "denied") throw new JoinFailed("The host didn't let the bot in", "denied");
-  if (outcome === "blocked") throw new JoinFailed("Google Meet refused to let the bot in", "blocked");
+  if (outcome === "blocked") throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
   if (outcome === "timeout") throw new JoinFailed("Nobody admitted the bot in time", "timeout");
 }
 
