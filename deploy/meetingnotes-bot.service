@@ -1,0 +1,30 @@
+[Unit]
+Description=MinuteFlow meeting bot (joins and records meetings)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=meetingnotes
+Group=meetingnotes
+WorkingDirectory=/opt/meetingnotes/app/apps/bot
+EnvironmentFile=/root/meeting-notes.env
+Environment=NODE_ENV=production
+Environment=CHROME_PATH=/usr/bin/google-chrome
+Environment=BOT_HEADLESS=false
+Environment=BOT_CONCURRENCY=1
+Environment=HOME=/var/lib/meetingnotes/bot-home
+# Chrome runs with a visible window on a virtual display; Meet is stricter with headless browsers.
+ExecStart=/usr/bin/xvfb-run -a --server-args="-screen 0 1280x720x24" /opt/meetingnotes/app/apps/bot/node_modules/.bin/tsx src/index.ts
+Restart=on-failure
+RestartSec=10
+# Let an in-progress recording finish its last chunk on shutdown.
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/var/lib/meetingnotes
+
+[Install]
+WantedBy=multi-user.target

@@ -18,4 +18,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+        env:
+          # Runs the bot against a fake Meet page with the runner's Chrome.
+          CHROME_PATH: /usr/bin/google-chrome
       - run: pnpm build

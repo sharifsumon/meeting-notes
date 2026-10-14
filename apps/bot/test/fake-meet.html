@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- A tiny stand-in for the Google Meet UI, used to test the bot end to end. -->
+<html lang="en">
+<body>
+  <div id="lobby">
+    <button aria-label="Turn off microphone">mic</button>
+    <button aria-label="Turn off camera">cam</button>
+    <input aria-label="Your name" id="name" />
+    <button id="ask">Ask to join</button>
+  </div>
+  <div id="call" hidden>
+    <button aria-label="Chat with everyone" id="chatbtn">chat</button>
+    <div id="chat" hidden><input aria-label="Send a message" id="msg" /></div>
+    <button aria-label="Leave call" id="leave">leave</button>
+    <p id="alone" hidden>You're the only one here</p>
+    <ul id="log"></ul>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const callMs = Number(params.get("callMs") ?? 6000);
+    const log = (t) => { const li = document.createElement("li"); li.textContent = t; document.getElementById("log").append(li); };
+
+    async function startRemoteAudio() {
+      // Loopback: pc1 sends a 440 Hz tone, pc2 receives it as a remote track (like Meet audio).
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const dest = ctx.createMediaStreamDestination();
+      osc.connect(dest); osc.start();
+      const pc1 = new RTCPeerConnection(), pc2 = new RTCPeerConnection();
+      pc1.onicecandidate = (e) => e.candidate && pc2.addIceCandidate(e.candidate);
+      pc2.onicecandidate = (e) => e.candidate && pc1.addIceCandidate(e.candidate);
+      pc2.ontrack = (e) => { const a = new Audio(); a.srcObject = new MediaStream([e.track]); a.muted = true; a.play(); };
+      dest.stream.getTracks().forEach((t) => pc1.addTrack(t, dest.stream));
+      await pc1.setLocalDescription(await pc1.createOffer());
+      await pc2.setRemoteDescription(pc1.localDescription);
+      await pc2.setLocalDescription(await pc2.createAnswer());
+      await pc1.setRemoteDescription(pc2.localDescription);
+    }
+
+    document.getElementById("ask").onclick = () => {
+      log("name:" + document.getElementById("name").value);
+      setTimeout(() => {
+        if (params.get("deny")) { document.body.append("Someone in the call denied your request to join"); return; }
+        document.getElementById("lobby").hidden = true;
+        document.getElementById("call").hidden = false;
+        startRemoteAudio();
+        setTimeout(() => (document.getElementById("alone").hidden = false), callMs);
+      }, 500);
+    };
+    document.getElementById("chatbtn").onclick = () => { const c = document.getElementById("chat"); c.hidden = !c.hidden; };
+    document.getElementById("msg").onkeydown = (e) => { if (e.key === "Enter") { log("chat:" + e.target.value); window.__lastChat = e.target.value; } };
+    document.getElementById("leave").onclick = () => (document.getElementById("call").hidden = true);
+  </script>
+</body>
+</html>

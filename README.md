@@ -7,10 +7,17 @@ A meeting note taker: connect your calendars, send a bot to your meetings, and g
 | Path | What it is |
 |---|---|
 | `apps/web` | Next.js web app: Google sign-in, calendar connect, upcoming meetings with a per-meeting "Record" toggle |
+| `apps/bot` | Meeting bot worker: joins Google Meet calls marked "Record" as a guest, records the audio, leaves when the call ends |
 | `packages/db` | Drizzle ORM schema and SQL migrations for PostgreSQL |
 | `deploy/` | systemd unit and deploy script for the server |
 
-Coming next: a Google Meet bot worker (Redis job queue), then transcripts and AI notes.
+Coming next: transcripts and AI notes for recorded meetings, then Teams and Zoom.
+
+## How the bot works
+
+Every 20 seconds the bot worker looks for Google Meet meetings with Record on that start within a minute, creates a `bot_sessions` row and queues a join job in Redis (BullMQ). The job opens Chrome, joins as "Notetaker for <first name>", waits for the host to admit it, posts a recording notice in the chat, and records every participant's audio by tapping Meet's WebRTC audio tracks. It leaves when everyone else has gone, when it's removed, or an hour after the scheduled end. Audio is saved as WebM/Opus under `STORAGE_DIR/<user id>/<bot session id>.webm`, and the session is left in `processing` for transcription.
+
+Run it locally with `CHROME_PATH=/path/to/chrome pnpm --filter @minuteflow/bot start`. Its tests drive a real browser against a fake Meet page (`apps/bot/test/fake-meet.html`) when `CHROME_PATH` is set.
 
 ## Local development
 

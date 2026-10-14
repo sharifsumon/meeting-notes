@@ -167,7 +167,8 @@ export const botSessions = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("bot_sessions_meeting_idx").on(t.meetingId)],
+  // One bot per meeting for now.
+  (t) => [uniqueIndex("bot_sessions_meeting_idx").on(t.meetingId)],
 );
 
 export type TranscriptSegment = {
