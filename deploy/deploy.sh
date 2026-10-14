@@ -15,6 +15,8 @@ mkdir -p /var/lib/meetingnotes/bot-home && chown meetingnotes: /var/lib/meetingn
 as_app() { sudo -u meetingnotes -H bash -c "cd $APP_DIR && $*"; }
 
 as_app "git fetch origin $BRANCH && git checkout $BRANCH && git reset --hard origin/$BRANCH"
+# Bash keeps reading this file as it runs, so restart once with the version just pulled.
+if [ -z "${DEPLOY_REEXEC:-}" ]; then DEPLOY_REEXEC=1 exec "$APP_DIR/deploy/deploy.sh" "$@"; fi
 as_app "pnpm install --frozen-lockfile"
 
 # Migrations and build need the secrets; pass them through without making the file readable.
