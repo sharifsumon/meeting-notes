@@ -15,6 +15,8 @@ const schema = z.object({
   BOT_CONCURRENCY: z.coerce.number().int().positive().default(2),
   // Join this many seconds before the scheduled start.
   BOT_JOIN_EARLY_S: z.coerce.number().int().nonnegative().default(60),
+  // Transcribes recordings when set. Without it, recordings are kept but not transcribed.
+  DEEPGRAM_API_KEY: z.string().min(1).optional(),
 });
 
 export const config = schema.parse(process.env);

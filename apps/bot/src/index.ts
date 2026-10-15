@@ -2,9 +2,11 @@ import { Worker } from "bullmq";
 import { config } from "./config";
 import { JOIN_QUEUE, redisConnection, type JoinJob } from "./queue";
 import { scheduleDueMeetings } from "./scheduler";
+import { transcribePending, transcriptionProvider } from "./transcribe";
 import { runBotSession } from "./worker";
 
 const SCHEDULE_EVERY_MS = 20_000;
+const TRANSCRIBE_EVERY_MS = 30_000;
 
 const worker = new Worker<JoinJob>(JOIN_QUEUE, (job) => runBotSession(job.data.botSessionId), {
   connection: redisConnection(),
@@ -24,10 +26,26 @@ async function tick() {
   timer = setTimeout(tick, SCHEDULE_EVERY_MS);
 }
 void tick();
-console.log(`Bot worker started (concurrency ${config.BOT_CONCURRENCY})`);
+
+const provider = transcriptionProvider();
+let transcribeTimer: NodeJS.Timeout | undefined;
+async function transcribeTick() {
+  try {
+    await transcribePending(provider!);
+  } catch (err) {
+    console.error("Transcription failed:", err);
+  }
+  transcribeTimer = setTimeout(transcribeTick, TRANSCRIBE_EVERY_MS);
+}
+if (provider) void transcribeTick();
+
+console.log(
+  `Bot worker started (concurrency ${config.BOT_CONCURRENCY}; transcription: ${provider?.name ?? "off, no DEEPGRAM_API_KEY"})`,
+);
 
 async function shutdown() {
   clearTimeout(timer);
+  clearTimeout(transcribeTimer);
   await worker.close();
   process.exit(0);
 }

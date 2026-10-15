@@ -38,9 +38,12 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
     { id: "actions", label: actionItems.length ? `Action items (${actionItems.length})` : "Action items" },
   ] as const;
 
-  const empty = recorded
-    ? "Transcripts and AI notes are the next step we're building. Your recording is saved and will be processed once they're ready."
-    : "Nothing here yet. Once the bot records this call, the transcript and notes will show up here.";
+  const empty =
+    segments.length > 0
+      ? "AI notes aren't switched on yet. The full transcript is in the Transcript tab."
+      : recorded
+        ? "Your recording is saved. The transcript and notes appear here once it has been transcribed."
+        : "Nothing here yet. Once the bot records this call, the transcript and notes will show up here.";
 
   const speakers = [...new Set(segments.map((s) => s.speaker))];
   const q = query.trim().toLowerCase();
