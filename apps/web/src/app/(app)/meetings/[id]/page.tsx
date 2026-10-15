@@ -21,6 +21,15 @@ const BOT_LABEL = {
   cancelled: "Skipped",
 } as const;
 
+/** "bn" → "Bangla", "en-US" → "American English"; falls back to the code. */
+function languageName(code: string) {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
 export default async function MeetingPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await requireUserId();
   const { id } = await params;
@@ -138,6 +147,12 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
               <dd>{row.calendarName ?? "Sent from a link"}</dd>
               <dt className="text-muted">Notetaker</dt>
               <dd>{bot ? BOT_LABEL[bot.status] : m.recordEnabled && !ended ? "Will join at the start" : "Off"}</dd>
+              {transcript?.language && (
+                <>
+                  <dt className="text-muted">Language</dt>
+                  <dd>{languageName(transcript.language)}</dd>
+                </>
+              )}
               {bot?.joinedAt && (
                 <>
                   <dt className="text-muted">Joined</dt>

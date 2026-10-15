@@ -13,7 +13,7 @@ export interface TranscriptionProvider {
 
 type DeepgramResponse = {
   results?: {
-    channels?: { detected_language?: string }[];
+    channels?: { detected_language?: string; language_confidence?: number; alternatives?: { confidence?: number }[] }[];
     utterances?: { start: number; end: number; transcript: string; speaker?: number }[];
   };
 };
@@ -30,37 +30,81 @@ export function deepgramSegments(body: DeepgramResponse): TranscriptSegment[] {
     }));
 }
 
-export function deepgram(apiKey: string): TranscriptionProvider {
+type Attempt = { language: string | null; languageConfidence: number; confidence: number; segments: TranscriptSegment[] };
+
+function attempt(body: DeepgramResponse, language?: string): Attempt {
+  const channel = body.results?.channels?.[0];
+  const segments = deepgramSegments(body);
+  return {
+    language: language ?? channel?.detected_language ?? null,
+    languageConfidence: channel?.language_confidence ?? 0,
+    // An empty transcript says nothing about the language, so it never wins.
+    confidence: segments.length ? (channel?.alternatives?.[0]?.confidence ?? 0) : 0,
+    segments,
+  };
+}
+
+/** Auto-detection is trusted for confidently detected English; anything else is checked against the extra languages. */
+export const TRUSTED_DETECTION = 0.85;
+
+/**
+ * Picks the transcript to keep. Deepgram's detection only knows ~35 languages (not Bangla), so audio in
+ * another language comes back as its closest guess, usually with a poor transcript. Each extra language
+ * is transcribed explicitly and the most confident transcript wins.
+ */
+export function needsExtraLanguages(auto: Attempt) {
+  return !(auto.language?.startsWith("en") && auto.languageConfidence >= TRUSTED_DETECTION);
+}
+
+export function bestAttempt(attempts: Attempt[]): Attempt {
+  return attempts.reduce((best, a) => (a.confidence > best.confidence ? a : best));
+}
+
+export function deepgram(apiKey: string, extraLanguages: string[] = []): TranscriptionProvider {
+  async function listen(audio: Buffer, mimeType: string, language?: string) {
+    const url = new URL("https://api.deepgram.com/v1/listen");
+    for (const [k, v] of Object.entries({
+      model: "nova-3",
+      smart_format: "true",
+      punctuate: "true",
+      diarize: "true",
+      utterances: "true",
+      ...(language ? { language } : { detect_language: "true" }),
+    })) {
+      url.searchParams.set(k, v);
+    }
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Token ${apiKey}`, "Content-Type": mimeType },
+      body: new Uint8Array(audio),
+      signal: AbortSignal.timeout(15 * 60_000),
+    });
+    if (!res.ok) throw new Error(`Deepgram returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    return attempt((await res.json()) as DeepgramResponse, language);
+  }
+
   return {
     name: "Deepgram",
     async transcribe(audio, mimeType) {
-      const url = new URL("https://api.deepgram.com/v1/listen");
-      for (const [k, v] of Object.entries({
-        model: "nova-3",
-        smart_format: "true",
-        punctuate: "true",
-        diarize: "true",
-        utterances: "true",
-        detect_language: "true",
-      })) {
-        url.searchParams.set(k, v);
+      const auto = await listen(audio, mimeType);
+      const attempts = [auto];
+      if (needsExtraLanguages(auto)) {
+        for (const language of extraLanguages) attempts.push(await listen(audio, mimeType, language));
       }
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Token ${apiKey}`, "Content-Type": mimeType },
-        body: new Uint8Array(audio),
-        signal: AbortSignal.timeout(15 * 60_000),
-      });
-      if (!res.ok) throw new Error(`Deepgram returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      const body = (await res.json()) as DeepgramResponse;
-      return { language: body.results?.channels?.[0]?.detected_language ?? null, segments: deepgramSegments(body) };
+      const best = bestAttempt(attempts);
+      console.log(
+        `[deepgram] ${attempts.map((a) => `${a.language ?? "?"}=${a.confidence.toFixed(2)}`).join(", ")} → ${best.language ?? "unknown"}`,
+      );
+      return { language: best.language, segments: best.segments };
     },
   };
 }
 
 /** The configured provider, or null when no transcription key is set. */
 export function transcriptionProvider(): TranscriptionProvider | null {
-  return config.DEEPGRAM_API_KEY ? deepgram(config.DEEPGRAM_API_KEY) : null;
+  if (!config.DEEPGRAM_API_KEY) return null;
+  const extra = config.TRANSCRIBE_EXTRA_LANGUAGES.split(",").map((l) => l.trim()).filter(Boolean);
+  return deepgram(config.DEEPGRAM_API_KEY, extra);
 }
 
 const FAILED_PREFIX = "Transcription failed";
