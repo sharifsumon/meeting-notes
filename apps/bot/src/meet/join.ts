@@ -5,7 +5,7 @@ import { installAudioCapture } from "./capture";
 export class JoinFailed extends Error {
   constructor(
     message: string,
-    readonly reason: "denied" | "timeout" | "blocked" | "error",
+    readonly reason: "denied" | "timeout" | "blocked" | "owner_absent" | "error",
   ) {
     super(message);
     this.name = "JoinFailed";
@@ -23,6 +23,17 @@ export type MeetSessionOptions = {
   admitTimeoutMs?: number;
   /** Leave after being the only participant this long. */
   aloneTimeoutMs?: number;
+  /**
+   * The MinuteFlow user's display name in Meet. When set, the bot only asks to join once they are
+   * in the call, and leaves `ownerGoneMs` after they leave.
+   */
+  ownerName?: string | null;
+  /** Give up if the owner hasn't shown up in the lobby by this time. */
+  ownerWaitUntil?: Date;
+  ownerGoneMs?: number;
+  /** Progress callbacks, used to update the bot session's status. */
+  onWaitingRoom?: () => PromiseLike<unknown> | void;
+  onAdmitted?: (joinedAt: Date) => PromiseLike<unknown> | void;
   log?: (msg: string) => void;
 };
 
@@ -84,14 +95,29 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
     log(`Opening ${opts.url}`);
     await page.goto(withEnglishUi(opts.url), { waitUntil: "domcontentloaded" });
 
-    await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 10 * 60_000, log);
+    const owner = opts.ownerName ? ownerPattern(opts.ownerName) : null;
+    await prepareLobby(page);
+    if (owner) {
+      log(`Waiting for ${opts.ownerName} to join the call`);
+      await waitForOwnerInLobby(page, owner, opts.ownerWaitUntil ?? opts.leaveBy);
+      log(`${opts.ownerName} is in the call`);
+    }
+
+    await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 10 * 60_000, log, opts.onWaitingRoom);
     const joinedAt = new Date();
     log("In the meeting; recording");
 
     await page.evaluate(() => (window as unknown as { __mfStart: () => void }).__mfStart());
-    await announce(page, opts.botName).catch((err) => log(`Could not post consent message: ${err}`));
+    await Promise.resolve(opts.onAdmitted?.(joinedAt)).catch((err) => log(`Status update failed: ${err}`));
+    await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
 
-    const reason = await waitForEnd(page, opts.leaveBy, opts.aloneTimeoutMs ?? 60_000, log);
+    const reason = await waitForEnd(page, {
+      leaveBy: opts.leaveBy,
+      aloneTimeoutMs: opts.aloneTimeoutMs ?? 60_000,
+      owner,
+      ownerGoneMs: opts.ownerGoneMs ?? 30_000,
+      log,
+    });
     log(`Leaving: ${reason}`);
 
     await page
@@ -108,14 +134,48 @@ const BLOCKED_MESSAGE = config.BOT_PROFILE_DIR
   ? "Google Meet refused to let the bot in"
   : "Google Meet refused to let the bot in as a signed-out guest (sign the bot in: see README)";
 
-async function joinFromLobby(page: Page, botName: string, admitTimeoutMs: number, log: (m: string) => void) {
-  const blocked = page.getByText(/you can't join this video call|unable to join this call/i);
+const BLOCKED_TEXT = /you can't join this video call|unable to join this call/i;
 
-  // Dismiss "Got it" style dialogs, then turn mic and camera off.
+/** Dismisses "Got it" style dialogs, then turns mic and camera off. */
+async function prepareLobby(page: Page) {
   await page.getByRole("button", { name: /^got it$/i }).click({ timeout: 5_000 }).catch(() => {});
   for (const name of [/turn off microphone/i, /turn off camera/i]) {
     await page.getByRole("button", { name }).first().click({ timeout: 10_000 }).catch(() => {});
   }
+}
+
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Matches the owner's name, but not the bot's own "Notetaker for <name>". */
+export function ownerPattern(name: string) {
+  return new RegExp(`(?<!for )\\b${escapeRegExp(name.trim())}\\b`, "i");
+}
+
+/**
+ * Meet's lobby lists who is already in the call ("Sharif Islam is in this call").
+ * Waits there, without asking to join, until the owner shows up.
+ */
+async function waitForOwnerInLobby(page: Page, owner: RegExp, until: Date) {
+  const blocked = page.getByText(BLOCKED_TEXT);
+  for (;;) {
+    if (await blocked.first().isVisible().catch(() => false)) throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
+    if (await page.getByText(owner).first().isVisible().catch(() => false)) return;
+    if (Date.now() >= until.getTime()) throw new JoinFailed("The meeting owner never joined the call", "owner_absent");
+    if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
+    await page.waitForTimeout(5_000);
+  }
+}
+
+async function joinFromLobby(
+  page: Page,
+  botName: string,
+  admitTimeoutMs: number,
+  log: (m: string) => void,
+  onWaitingRoom?: () => PromiseLike<unknown> | void,
+) {
+  const blocked = page.getByText(BLOCKED_TEXT);
 
   // Guests type a name; a signed-in bot joins under its Google account name instead.
   const nameBox = page.getByRole("textbox", { name: /your name/i });
@@ -131,6 +191,7 @@ async function joinFromLobby(page: Page, botName: string, admitTimeoutMs: number
 
   await joinButton.click({ timeout: 15_000 });
   log("Asked to join; waiting to be admitted");
+  await Promise.resolve(onWaitingRoom?.()).catch((err) => log(`Status update failed: ${err}`));
 
   const inCall = page.getByRole("button", { name: /leave call/i });
   const denied = page.getByText(/denied your request|no one responded to your request|you've been removed/i);
@@ -145,23 +206,68 @@ async function joinFromLobby(page: Page, botName: string, admitTimeoutMs: number
   if (outcome === "timeout") throw new JoinFailed("Nobody admitted the bot in time", "timeout");
 }
 
-async function announce(page: Page, botName: string) {
-  await page.getByRole("button", { name: /chat with everyone/i }).click({ timeout: 10_000 });
-  const box = page.getByRole("textbox", { name: /send a message/i });
-  await box.fill(
-    `${botName} is recording and transcribing this meeting to take notes. Remove me from the call if you don't want that.`,
-    { timeout: 10_000 },
-  );
-  await box.press("Enter");
-  // Close the chat panel again.
-  await page.getByRole("button", { name: /chat with everyone/i }).click({ timeout: 5_000 }).catch(() => {});
+const CHAT_RESTRICTED = /only .{0,80} can send messages|can't send messages|chat (is|has been) (turned off|restricted|disabled)|messages are turned off/i;
+
+/** Posts the recording notice in the chat, unless the host has restricted who can chat. */
+async function announce(page: Page, botName: string, log: (m: string) => void) {
+  const chatButton = page.getByRole("button", { name: /chat with everyone/i });
+  await chatButton.click({ timeout: 10_000 });
+  try {
+    const box = page.getByRole("textbox", { name: /send a message/i });
+    const ready = await box
+      .waitFor({ timeout: 5_000 })
+      .then(() => box.isEditable())
+      .catch(() => false);
+    if (!ready || (await page.getByText(CHAT_RESTRICTED).first().isVisible().catch(() => false))) {
+      log("Chat is restricted for the bot; skipping the consent message");
+      return;
+    }
+    await box.fill(
+      `${botName} is recording and transcribing this meeting to take notes. Remove me from the call if you don't want that.`,
+      { timeout: 10_000 },
+    );
+    await box.press("Enter");
+  } finally {
+    // Close the chat panel again.
+    await chatButton.click({ timeout: 5_000 }).catch(() => {});
+  }
 }
 
-async function waitForEnd(page: Page, leaveBy: Date, aloneTimeoutMs: number, log: (m: string) => void) {
+/**
+ * Reads the People panel. Returns null when it can't be found, so callers can fall back to
+ * Meet's "only one here" banner.
+ */
+async function participants(page: Page): Promise<string[] | null> {
+  const list = page.getByRole("list", { name: /participants/i }).first();
+  if (!(await list.isVisible().catch(() => false))) {
+    await page
+      .getByRole("button", { name: /^(people|show everyone)/i })
+      .first()
+      .click({ timeout: 3_000 })
+      .catch(() => {});
+    if (!(await list.waitFor({ timeout: 3_000 }).then(() => true).catch(() => false))) return null;
+  }
+  return list
+    .getByRole("listitem")
+    .evaluateAll((items) => items.map((el) => el.getAttribute("aria-label") || el.textContent || "").filter(Boolean))
+    .catch(() => null);
+}
+
+type EndOptions = {
+  leaveBy: Date;
+  aloneTimeoutMs: number;
+  owner: RegExp | null;
+  ownerGoneMs: number;
+  log: (m: string) => void;
+};
+
+async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGoneMs, log }: EndOptions) {
   const inCall = page.getByRole("button", { name: /leave call/i });
-  const alone = page.getByText(/you're the only one here|everyone else has left/i);
+  const aloneBanner = page.getByText(/you're the only one here|everyone else has left/i);
   const ended = page.getByText(/you've been removed|the call has ended|you left the meeting/i);
   let aloneSince: number | null = null;
+  let ownerSeen = false;
+  let ownerGoneSince: number | null = null;
 
   for (;;) {
     if (Date.now() >= leaveBy.getTime()) return "scheduled end passed";
@@ -169,13 +275,29 @@ async function waitForEnd(page: Page, leaveBy: Date, aloneTimeoutMs: number, log
     if (await ended.first().isVisible().catch(() => false)) return "meeting ended or bot removed";
     if (!(await inCall.isVisible().catch(() => false))) return "no longer in the call";
 
-    if (await alone.first().isVisible().catch(() => false)) {
+    const people = await participants(page);
+
+    if (owner && people) {
+      if (people.some((p) => owner.test(p))) {
+        if (ownerGoneSince !== null) log("The owner rejoined");
+        ownerSeen = true;
+        ownerGoneSince = null;
+      } else if (ownerSeen) {
+        if (ownerGoneSince === null) log("The owner left; leaving soon unless they come back");
+        ownerGoneSince ??= Date.now();
+        if (Date.now() - ownerGoneSince >= ownerGoneMs) return "the owner left";
+      }
+    }
+
+    // The People panel lists the bot too, so one entry means it's alone.
+    const alone = people ? people.length <= 1 : await aloneBanner.first().isVisible().catch(() => false);
+    if (alone) {
       aloneSince ??= Date.now();
       if (Date.now() - aloneSince >= aloneTimeoutMs) return "everyone else left";
     } else if (aloneSince !== null) {
       log("Someone rejoined");
       aloneSince = null;
     }
-    await page.waitForTimeout(5_000);
+    await page.waitForTimeout(Math.min(5_000, ownerGoneMs, aloneTimeoutMs));
   }
 }

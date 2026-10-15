@@ -5,12 +5,15 @@
   <div id="lobby">
     <button aria-label="Turn off microphone">mic</button>
     <button aria-label="Turn off camera">cam</button>
+    <p id="incall">No one else is here</p>
     <input aria-label="Your name" id="name" />
     <button id="ask">Ask to join</button>
   </div>
   <div id="call" hidden>
     <button aria-label="Chat with everyone" id="chatbtn">chat</button>
-    <div id="chat" hidden><input aria-label="Send a message" id="msg" /></div>
+    <div id="chat" hidden><input aria-label="Send a message" id="msg" /><p id="restricted" hidden>Only people in Example Corp can send messages</p></div>
+    <button aria-label="People" id="peoplebtn">people</button>
+    <div id="people" hidden><ul aria-label="Participants" id="plist"></ul></div>
     <button aria-label="Leave call" id="leave">leave</button>
     <p id="alone" hidden>You're the only one here</p>
     <ul id="log"></ul>
@@ -18,6 +21,21 @@
   <script>
     const params = new URLSearchParams(location.search);
     const callMs = Number(params.get("callMs") ?? 6000);
+    const owner = "Sharif Islam";
+    const ownerJoinMs = Number(params.get("ownerJoinMs") ?? 0);
+    const ownerLeaveMs = params.get("ownerLeaveMs");
+    let others = [];
+    const render = () => {
+      document.getElementById("incall").textContent = others.length ? others.join(", ") + " is in this call" : "No one else is here";
+      document.getElementById("plist").replaceChildren(...["Notetaker for Sharif", ...others].map((n) => {
+        const li = document.createElement("li"); li.setAttribute("aria-label", n); li.textContent = n; return li;
+      }));
+    };
+    setTimeout(() => { others = [owner, "Guest Two"]; render(); }, ownerJoinMs);
+    if (params.get("chatRestricted")) {
+      document.getElementById("msg").disabled = true;
+      document.getElementById("restricted").hidden = false;
+    }
     const log = (t) => { const li = document.createElement("li"); li.textContent = t; document.getElementById("log").append(li); };
 
     async function startRemoteAudio() {
@@ -39,15 +57,18 @@
 
     document.getElementById("ask").onclick = () => {
       log("name:" + document.getElementById("name").value);
+      window.__askedAt = Date.now();
       setTimeout(() => {
         if (params.get("deny")) { document.body.append("Someone in the call denied your request to join"); return; }
         document.getElementById("lobby").hidden = true;
         document.getElementById("call").hidden = false;
         startRemoteAudio();
-        setTimeout(() => (document.getElementById("alone").hidden = false), callMs);
+        if (ownerLeaveMs) setTimeout(() => { others = others.filter((n) => n !== owner); render(); }, Number(ownerLeaveMs));
+        setTimeout(() => { others = []; render(); document.getElementById("alone").hidden = false; }, callMs);
       }, 500);
     };
-    document.getElementById("chatbtn").onclick = () => { const c = document.getElementById("chat"); c.hidden = !c.hidden; };
+    document.getElementById("chatbtn").onclick = () => { const c = document.getElementById("chat"); c.hidden = !c.hidden; document.getElementById("people").hidden = true; };
+    document.getElementById("peoplebtn").onclick = () => { const c = document.getElementById("people"); c.hidden = !c.hidden; document.getElementById("chat").hidden = true; };
     document.getElementById("msg").onkeydown = (e) => { if (e.key === "Enter") { log("chat:" + e.target.value); window.__lastChat = e.target.value; } };
     document.getElementById("leave").onclick = () => (document.getElementById("call").hidden = true);
   </script>

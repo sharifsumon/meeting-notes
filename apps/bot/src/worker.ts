@@ -1,4 +1,4 @@
-import { botSessions, meetings } from "@minuteflow/db";
+import { botSessions, meetings, users } from "@minuteflow/db";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { JoinFailed, recordMeet } from "./meet/join";
@@ -11,12 +11,13 @@ const OVERRUN_MS = 60 * 60_000;
 /** Runs one bot session: join the meeting, record it, store the audio. */
 export async function runBotSession(botSessionId: string) {
   const [row] = await db
-    .select({ session: botSessions, meeting: meetings })
+    .select({ session: botSessions, meeting: meetings, ownerName: users.name })
     .from(botSessions)
     .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
+    .innerJoin(users, eq(users.id, meetings.userId))
     .where(eq(botSessions.id, botSessionId));
   if (!row) throw new Error(`Bot session ${botSessionId} not found`);
-  const { session, meeting } = row;
+  const { session, meeting, ownerName } = row;
   if (session.status !== "scheduled") return; // already ran or was cancelled
   if (!meeting.meetingUrl || !meeting.recordEnabled || meeting.cancelled) {
     await setStatus(botSessionId, { status: "cancelled" });
@@ -36,6 +37,11 @@ export async function runBotSession(botSessionId: string) {
       botName: await botNameFor(meeting.id),
       onChunk,
       leaveBy: new Date(meeting.endsAt.getTime() + OVERRUN_MS),
+      // Follow the MinuteFlow user: join once they're in the call, leave shortly after they do.
+      ownerName,
+      ownerWaitUntil: meeting.endsAt,
+      onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
+      onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
       log,
     });
     await writes;
@@ -50,7 +56,9 @@ export async function runBotSession(botSessionId: string) {
   } catch (err) {
     const message = err instanceof JoinFailed ? err.message : `Bot crashed: ${String(err)}`;
     log(message);
-    await setStatus(botSessionId, { status: "failed", error: message, leftAt: new Date() });
+    // Nobody to record for: the owner never showed up, so the bot never asked to join.
+    const status = err instanceof JoinFailed && err.reason === "owner_absent" ? "cancelled" : "failed";
+    await setStatus(botSessionId, { status, error: message, leftAt: new Date() });
   } finally {
     await writes.catch(() => {});
     await recording.close();

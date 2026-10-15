@@ -154,7 +154,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
                 </>
               )}
             </dl>
-            {bot?.status === "failed" && bot.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{bot.error}</p>}
+            {(bot?.status === "failed" || bot?.status === "cancelled") && bot.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{bot.error}</p>}
           </section>
         </aside>
       </div>
