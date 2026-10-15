@@ -123,6 +123,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             actionItems={note?.actionItems ?? []}
             segments={transcript?.segments ?? []}
             recorded={hasRecording}
+            transcribed={!!transcript}
           />
         </div>
         <aside className="flex min-w-0 flex-[1_1_280px] flex-col gap-5">

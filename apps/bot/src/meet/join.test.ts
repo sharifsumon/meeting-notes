@@ -28,10 +28,14 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
       leaveBy: new Date(Date.now() + 60_000),
       admitTimeoutMs: 10_000,
       aloneTimeoutMs: 2_000,
+      levelLogMs: 2_000,
       log: (m) => logs.push(m),
     });
 
     expect(result.reason).toBe("everyone else left");
+    // The fake call plays a tone, so the bot should hear it.
+    expect(logs.join("\n")).toMatch(/Audio level: peak -?\d+ dBFS/);
+    expect(logs.join("\n")).not.toMatch(/Only hearing silence/);
     const audio = Buffer.concat(chunks);
     // WebM files start with the EBML magic number.
     expect(audio.subarray(0, 4).toString("hex")).toBe("1a45dfa3");

@@ -12,19 +12,32 @@ export function installAudioCapture() {
     __mfStart?: () => void;
     __mfStop?: () => Promise<void>;
     __mfTrackCount?: () => number;
+    __mfLevel?: () => { peak: number; rms: number; tracks: number; liveTracks: number };
   };
   const w = window as Win;
 
   let ctx: AudioContext | null = null;
   let dest: MediaStreamAudioDestinationNode | null = null;
   let recorder: MediaRecorder | null = null;
+  let analyser: AnalyserNode | null = null;
+  let peak = 0;
+  let sumSquares = 0;
+  let samples = 0;
   const tracks: MediaStreamTrack[] = [];
   const connected = new Set<string>();
 
   const connect = (track: MediaStreamTrack) => {
     if (!ctx || !dest || connected.has(track.id)) return;
     connected.add(track.id);
-    ctx.createMediaStreamSource(new MediaStream([track])).connect(dest);
+    const stream = new MediaStream([track]);
+    // Chrome only feeds a remote WebRTC track into Web Audio while a media element is playing it.
+    const sink = new Audio();
+    sink.muted = true;
+    sink.srcObject = stream;
+    void sink.play().catch(() => {});
+    const source = ctx.createMediaStreamSource(stream);
+    source.connect(dest);
+    if (analyser) source.connect(analyser);
   };
 
   const Original = window.RTCPeerConnection;
@@ -56,6 +69,20 @@ export function installAudioCapture() {
     silence.offset.value = 0;
     silence.connect(dest);
     silence.start();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    const buf = new Float32Array(analyser.fftSize);
+    // Samples the mixed level every second so the bot can tell when it only hears silence.
+    setInterval(() => {
+      if (!analyser) return;
+      analyser.getFloatTimeDomainData(buf);
+      for (const v of buf) {
+        const a = Math.abs(v);
+        if (a > peak) peak = a;
+        sumSquares += v * v;
+      }
+      samples += buf.length;
+    }, 1_000);
     tracks.filter((t) => t.readyState === "live").forEach(connect);
 
     recorder = new MediaRecorder(dest.stream, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 64_000 });
@@ -75,4 +102,18 @@ export function installAudioCapture() {
     });
 
   w.__mfTrackCount = () => connected.size;
+
+  /** Peak and RMS level (0–1) of everything heard since the last call. */
+  w.__mfLevel = () => {
+    const level = {
+      peak,
+      rms: samples ? Math.sqrt(sumSquares / samples) : 0,
+      tracks: connected.size,
+      liveTracks: tracks.filter((t) => t.readyState === "live").length,
+    };
+    peak = 0;
+    sumSquares = 0;
+    samples = 0;
+    return level;
+  };
 }

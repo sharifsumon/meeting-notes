@@ -30,6 +30,8 @@ export type MeetSessionOptions = {
    */
   ownerName?: string | null;
   ownerGoneMs?: number;
+  /** How often to log the audio level (and warn about silence). */
+  levelLogMs?: number;
   /** Progress callbacks, used to update the bot session's status. */
   onWaitingRoom?: () => PromiseLike<unknown> | void;
   onAdmitted?: (joinedAt: Date) => PromiseLike<unknown> | void;
@@ -102,6 +104,7 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
     log("In the meeting; recording");
 
     await page.evaluate(() => (window as unknown as { __mfStart: () => void }).__mfStart());
+    const levelTimer = setInterval(() => void logLevel(page, log), opts.levelLogMs ?? 60_000);
     await Promise.resolve(opts.onAdmitted?.(joinedAt)).catch((err) => log(`Status update failed: ${err}`));
     await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
 
@@ -113,6 +116,7 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
       log,
     });
     log(`Leaving: ${reason}`);
+    clearInterval(levelTimer);
 
     await page
       .evaluate(() => (window as unknown as { __mfStop: () => Promise<void> }).__mfStop())
@@ -122,6 +126,19 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
   } finally {
     await context.close().catch(() => {});
   }
+}
+
+const dbfs = (v: number) => (v > 0 ? `${(20 * Math.log10(v)).toFixed(0)} dBFS` : "silent");
+
+/** Logs what the recorder heard since the last check, so silent recordings can be diagnosed. */
+async function logLevel(page: Page, log: (m: string) => void) {
+  const level = await page
+    .evaluate(() => (window as unknown as { __mfLevel: () => { peak: number; rms: number; tracks: number; liveTracks: number } }).__mfLevel())
+    .catch(() => null);
+  if (!level) return;
+  log(`Audio level: peak ${dbfs(level.peak)}, average ${dbfs(level.rms)}; ${level.liveTracks} of ${level.tracks} audio tracks live`);
+  // About -60 dBFS: nothing but silence (or the odd click) since the last check.
+  if (level.peak < 0.001) log(`Only hearing silence (${level.tracks} audio tracks)`);
 }
 
 const BLOCKED_MESSAGE = config.BOT_PROFILE_DIR

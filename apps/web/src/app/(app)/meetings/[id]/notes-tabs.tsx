@@ -12,6 +12,8 @@ type Props = {
   actionItems: ActionItem[];
   segments: TranscriptSegment[];
   recorded: boolean;
+  /** A transcript was saved, even if it has no lines. */
+  transcribed: boolean;
 };
 
 const AVATAR = [
@@ -29,7 +31,7 @@ function clock(ms: number) {
   return s >= 3600 ? `${Math.floor(s / 3600)}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments, recorded }: Props) {
+export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments, recorded, transcribed }: Props) {
   const [tab, setTab] = useState<"summary" | "transcript" | "actions">("summary");
   const [query, setQuery] = useState("");
 
@@ -39,12 +41,17 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
     { id: "actions", label: actionItems.length ? `Action items (${actionItems.length})` : "Action items" },
   ] as const;
 
-  const empty = recorded
-    ? "Summary will appear once AI notes are switched on."
-    : "Nothing here yet. Once the bot records this call, the transcript and notes will show up here.";
-  const emptyTranscript = recorded
-    ? "No transcript yet. It appears here a minute or so after the call, once the recording has been transcribed. If the call is already transcribed, nobody was heard speaking."
-    : empty;
+  const silent = transcribed && segments.length === 0;
+  const empty = silent
+    ? "No speech was detected in this recording, so there are no notes. Play the audio above to check what the bot heard."
+    : recorded
+      ? "Summary will appear once AI notes are switched on."
+      : "Nothing here yet. Once the bot records this call, the transcript and notes will show up here.";
+  const emptyTranscript = silent
+    ? "No speech was detected in this recording."
+    : recorded
+      ? "No transcript yet. It appears here a minute or so after the call, once the recording has been transcribed."
+      : empty;
 
   const speakers = [...new Set(segments.map((s) => s.speaker))];
   const q = query.trim().toLowerCase();
@@ -162,7 +169,7 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
         <section className="card flex flex-col gap-1.5 p-6">
           <h2 className="mb-2.5 text-lg font-bold">Action items</h2>
           {actionItems.length === 0 ? (
-            <p className="text-[15px] leading-relaxed text-muted">{recorded ? "Action items will appear once AI notes are switched on." : empty}</p>
+            <p className="text-[15px] leading-relaxed text-muted">{recorded && !silent ? "Action items will appear once AI notes are switched on." : empty}</p>
           ) : (
             actionItems.map((x, i) => (
               <div key={i} className="flex flex-wrap items-center gap-3 border-t border-line-soft py-3">
