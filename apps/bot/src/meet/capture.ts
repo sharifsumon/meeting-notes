@@ -150,7 +150,9 @@ export function installCaptionWatcher() {
   };
 
   setInterval(() => {
-    const region = document.querySelector('[role="region"][aria-label*="aption" i]');
+    const region =
+      document.querySelector('[role="region"][aria-label*="aption" i]') ??
+      document.querySelector('[aria-label*="aption" i]:not(button):not([role="button"]):not([role="menuitem"])');
     if (!region) return;
     const t = now();
     for (const img of Array.from(region.querySelectorAll("img"))) {

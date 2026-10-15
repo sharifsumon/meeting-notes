@@ -216,18 +216,42 @@ async function joinFromLobby(
   log("Asked to join; waiting to be admitted");
   await Promise.resolve(onWaitingRoom?.()).catch((err) => log(`Status update failed: ${err}`));
 
+  // Newer Meet shows the leave button in the waiting room too, so "in the call" also needs
+  // the waiting text gone.
   const inCall = page.getByRole("button", { name: /leave call/i });
+  const waiting = page.getByText(WAITING_TEXT);
   const denied = page.getByText(/denied your request|no one responded to your request|you've been removed/i);
-  const outcome = await Promise.race([
-    inCall.waitFor({ timeout: admitTimeoutMs }).then(() => "joined" as const),
-    denied.waitFor({ timeout: admitTimeoutMs }).then(() => "denied" as const),
-    blocked.waitFor({ timeout: admitTimeoutMs }).then(() => "blocked" as const),
-  ]).catch(() => "timeout" as const);
+  const deadline = Date.now() + admitTimeoutMs;
+  let outcome: "joined" | "denied" | "blocked" | "timeout" = "timeout";
+  let inCallChecks = 0;
+  while (Date.now() < deadline) {
+    if (await denied.first().isVisible().catch(() => false)) {
+      outcome = "denied";
+      break;
+    }
+    if (await blocked.first().isVisible().catch(() => false)) {
+      outcome = "blocked";
+      break;
+    }
+    const admitted =
+      (await inCall.first().isVisible().catch(() => false)) && !(await waiting.first().isVisible().catch(() => false));
+    // Two checks in a row, so a waiting-room screen that's still drawing doesn't count.
+    inCallChecks = admitted ? inCallChecks + 1 : 0;
+    if (inCallChecks >= 2) {
+      outcome = "joined";
+      break;
+    }
+    if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
+    await page.waitForTimeout(1_000);
+  }
 
   if (outcome === "denied") throw new JoinFailed("The host didn't let the bot in", "denied");
   if (outcome === "blocked") throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
   if (outcome === "timeout") throw new JoinFailed("Nobody admitted the bot in time", "timeout");
 }
+
+const WAITING_TEXT =
+  /please wait until a meeting host brings you into the call|asking to be let in|someone in the call (needs to|will) let you in|you'll join the call when someone lets you in|waiting for the host/i;
 
 const CHAT_RESTRICTED = /only .{0,80} can send messages|can't send messages|chat (is|has been) (turned off|restricted|disabled)|messages are turned off/i;
 
@@ -278,24 +302,57 @@ async function participants(page: Page): Promise<string[] | null> {
 
 /** Turns on Meet's captions so the bot can see who is speaking. */
 async function enableCaptions(page: Page, log: (m: string) => void) {
-  const region = page.getByRole("region", { name: /captions/i }).first();
-  const button = page.getByRole("button", { name: /turn on captions/i }).first();
-  if (await button.isVisible().catch(() => false)) {
-    await button.click({ timeout: 5_000 });
-  } else {
-    // "c" is Meet's captions shortcut; the button can be hidden in a narrow window.
-    await page.keyboard.press("c");
-  }
-  const on = await region
-    .waitFor({ timeout: 10_000 })
-    .then(() => true)
-    .catch(() => false);
-  if (!on) {
-    log("Captions didn't turn on; speakers will be numbered");
-    return;
-  }
+  const turnOff = page
+    .getByRole("button", { name: /turn off captions/i })
+    .or(page.getByRole("button", { name: /captions/i, pressed: true }))
+    .or(page.getByRole("region", { name: /captions/i }))
+    .first();
+  const isOn = () => turnOff.isVisible().catch(() => false);
+  // The watcher polls for the captions area itself, so it's safe to start before captions show up.
   await page.evaluate(installCaptionWatcher);
-  log("Captions on; noting who speaks");
+
+  const attempts: Array<[string, () => Promise<unknown>]> = [
+    ["button", () => page.getByRole("button", { name: /turn on captions/i }).first().click({ timeout: 3_000 })],
+    [
+      "menu",
+      async () => {
+        await page.getByRole("button", { name: /more options/i }).first().click({ timeout: 3_000 });
+        await page.getByRole("menuitem", { name: /captions/i }).first().click({ timeout: 3_000 });
+      },
+    ],
+    [
+      "shortcut",
+      async () => {
+        // "c" is Meet's shortcut, but not while a text box (the chat) has focus.
+        await page.keyboard.press("Escape");
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.keyboard.press("c");
+      },
+    ],
+  ];
+  for (const [how, attempt] of attempts) {
+    if (await isOn()) break;
+    await attempt().catch(() => {});
+    await page.keyboard.press("Escape").catch(() => {});
+    if (await turnOff.waitFor({ timeout: 3_000 }).then(() => true).catch(() => false)) {
+      log(`Captions on (${how}); noting who speaks`);
+      return;
+    }
+  }
+  if (await isOn()) return log("Captions on; noting who speaks");
+
+  // Leave a trail for fixing this: what the bot could press.
+  const buttons = await page
+    .getByRole("button")
+    .evaluateAll((els) =>
+      els
+        .filter((el) => (el as HTMLElement).offsetParent !== null)
+        .map((el) => el.getAttribute("aria-label") || (el as HTMLElement).innerText)
+        .filter(Boolean)
+        .slice(0, 40),
+    )
+    .catch(() => []);
+  log(`Captions didn't turn on; speakers will be numbered. Buttons: ${buttons.join(" | ")}`);
 }
 
 const MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i;

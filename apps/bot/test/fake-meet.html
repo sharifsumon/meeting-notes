@@ -8,6 +8,11 @@
     <p id="incall">No one else is here</p>
     <input aria-label="Your name" id="name" />
     <button id="ask">Ask to join</button>
+    <!-- Newer Meet: the waiting room already has a leave button. -->
+    <div id="waitroom" hidden>
+      <p>Please wait until a meeting host brings you into the call</p>
+      <button aria-label="Leave call">leave</button>
+    </div>
   </div>
   <div id="call" hidden>
     <button aria-label="Chat with everyone" id="chatbtn">chat</button>
@@ -63,14 +68,16 @@
     document.getElementById("ask").onclick = () => {
       log("name:" + document.getElementById("name").value);
       window.__askedAt = Date.now();
+      if (params.get("waitingRoomLeave")) document.getElementById("waitroom").hidden = false;
       setTimeout(() => {
         if (params.get("deny")) { document.body.append("Someone in the call denied your request to join"); return; }
         document.getElementById("lobby").hidden = true;
         document.getElementById("call").hidden = false;
+        document.getElementById("waitroom").hidden = true;
         startRemoteAudio();
         if (ownerLeaveMs) setTimeout(() => { others = others.filter((n) => n !== owner); render(); }, Number(ownerLeaveMs));
         setTimeout(() => { others = []; render(); document.getElementById("alone").hidden = false; }, callMs);
-      }, 500);
+      }, Number(params.get("admitMs") ?? 500));
     };
     document.getElementById("chatbtn").onclick = () => { const c = document.getElementById("chat"); c.hidden = !c.hidden; document.getElementById("people").hidden = true; };
     document.getElementById("peoplebtn").onclick = () => { const c = document.getElementById("people"); c.hidden = !c.hidden; document.getElementById("chat").hidden = true; };
@@ -86,6 +93,7 @@
     };
     document.getElementById("ccbtn").onclick = () => {
       document.getElementById("captions").hidden = false;
+      document.getElementById("ccbtn").setAttribute("aria-label", "Turn off captions");
       if (!params.get("captions")) return;
       setTimeout(() => say("Sharif Islam", ["Hello", "everyone", "let's", "start"], 500), 500);
       setTimeout(() => say("Guest Two", ["Sounds", "good", "to", "me"], 500), 3500);

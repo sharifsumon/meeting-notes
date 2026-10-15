@@ -133,6 +133,23 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
     expect(logs.join("\n")).not.toMatch(/Could not post consent message/);
   }, 60_000);
 
+  it("doesn't count the waiting room as being in the call", async () => {
+    const { recordMeet } = await import("./join");
+    const times: Record<string, number> = {};
+    await recordMeet({
+      url: fakeMeet("waitingRoomLeave=1&admitMs=5000&callMs=2000"),
+      botName: "Notetaker for Test",
+      onChunk: async () => {},
+      onWaitingRoom: () => void (times.asked = Date.now()),
+      onAdmitted: () => void (times.admitted = Date.now()),
+      leaveBy: new Date(Date.now() + 60_000),
+      admitTimeoutMs: 20_000,
+      aloneTimeoutMs: 1_000,
+      log: () => {},
+    });
+    expect(times.admitted! - times.asked!).toBeGreaterThanOrEqual(4_500);
+  }, 60_000);
+
   it("reports when the host denies the request", async () => {
     const { recordMeet, JoinFailed } = await import("./join");
     await expect(
