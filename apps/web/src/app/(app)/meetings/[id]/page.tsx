@@ -7,6 +7,7 @@ import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui
 import { db } from "@/lib/db";
 import { requireUserId } from "@/lib/session";
 import { RecordSwitch } from "../record-switch";
+import { AudioPlayer } from "./audio-player";
 import { NotesTabs } from "./notes-tabs";
 
 const BOT_LABEL = {
@@ -14,8 +15,8 @@ const BOT_LABEL = {
   joining: "Joining the call",
   waiting_room: "Waiting to be admitted",
   recording: "Recording now",
-  processing: "Recording saved",
-  completed: "Notes ready",
+  processing: "Transcribing",
+  completed: "Done",
   failed: "Couldn't record",
   cancelled: "Skipped",
 } as const;
@@ -95,12 +96,14 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             {hasRecording && bot && (
               <a href={`/api/recordings/${bot.id}?download=1`} className="btn-outline">
                 <Icon name="download" size={17} />
-                Recording
+                Download audio
               </a>
             )}
           </div>
         </div>
       </section>
+
+      {hasRecording && bot && <AudioPlayer src={`/api/recordings/${bot.id}`} minutes={recordedMinutes} />}
 
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-5">
@@ -114,11 +117,9 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
           />
         </div>
         <aside className="flex min-w-0 flex-[1_1_280px] flex-col gap-5">
-          <section className="card flex flex-col gap-3.5 p-5">
-            <h2 className="text-[15px] font-bold">Recording</h2>
-            {hasRecording && bot ? (
-              <audio controls preload="metadata" src={`/api/recordings/${bot.id}`} className="w-full" />
-            ) : (
+          {!hasRecording && (
+            <section className="card flex flex-col gap-3.5 p-5">
+              <h2 className="text-[15px] font-bold">Meeting audio</h2>
               <p className="text-sm leading-relaxed text-muted">
                 {bot?.status === "failed"
                   ? "The bot couldn't record this call."
@@ -126,8 +127,8 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
                     ? "This call wasn't recorded."
                     : "The recording appears here once the bot has been in the call."}
               </p>
-            )}
-          </section>
+            </section>
+          )}
           <section className="card flex flex-col gap-3 p-5">
             <h2 className="text-[15px] font-bold">Details</h2>
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2.5 text-sm [&_dd]:break-words">

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ActionItem, TranscriptSegment } from "@minuteflow/db";
 import { Icon } from "@/components/ui";
+import { seekAudio } from "./audio-player";
 
 type Props = {
   summary: string;
@@ -38,12 +39,12 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
     { id: "actions", label: actionItems.length ? `Action items (${actionItems.length})` : "Action items" },
   ] as const;
 
-  const empty =
-    segments.length > 0
-      ? "AI notes aren't switched on yet. The full transcript is in the Transcript tab."
-      : recorded
-        ? "Your recording is saved. The transcript and notes appear here once it has been transcribed."
-        : "Nothing here yet. Once the bot records this call, the transcript and notes will show up here.";
+  const empty = recorded
+    ? "Summary will appear once AI notes are switched on."
+    : "Nothing here yet. Once the bot records this call, the transcript and notes will show up here.";
+  const emptyTranscript = recorded
+    ? "No transcript yet. It appears here a minute or so after the call, once the recording has been transcribed. If the call is already transcribed, nobody was heard speaking."
+    : empty;
 
   const speakers = [...new Set(segments.map((s) => s.speaker))];
   const q = query.trim().toLowerCase();
@@ -124,7 +125,7 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
             )}
           </div>
           {segments.length === 0 ? (
-            <p className="text-[15px] leading-relaxed text-muted">{empty}</p>
+            <p className="text-[15px] leading-relaxed text-muted">{emptyTranscript}</p>
           ) : lines.length === 0 ? (
             <p className="text-sm text-muted">No lines match “{query}”.</p>
           ) : (
@@ -135,12 +136,19 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
                     AVATAR[speakers.indexOf(l.speaker) % AVATAR.length]
                   }`}
                 >
-                  {l.speaker.slice(0, 2).toUpperCase()}
+                  {/^speaker (\d+)$/i.exec(l.speaker)?.[1] ? `S${/\d+$/.exec(l.speaker)![0]}` : l.speaker.slice(0, 2).toUpperCase()}
                 </span>
                 <div className="flex min-w-0 flex-col gap-1">
                   <div className="flex items-baseline gap-2.5">
                     <span className="text-sm font-bold">{l.speaker}</span>
-                    <span className="text-[13px] text-accent tabular-nums">{clock(l.startMs)}</span>
+                    <button
+                      type="button"
+                      onClick={() => seekAudio(l.startMs)}
+                      aria-label={`Play from ${clock(l.startMs)}`}
+                      className="text-[13px] text-accent tabular-nums hover:underline"
+                    >
+                      {clock(l.startMs)}
+                    </button>
                   </div>
                   <p className="text-[15px] leading-relaxed text-ink-2">{l.text}</p>
                 </div>
@@ -154,7 +162,7 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
         <section className="card flex flex-col gap-1.5 p-6">
           <h2 className="mb-2.5 text-lg font-bold">Action items</h2>
           {actionItems.length === 0 ? (
-            <p className="text-[15px] leading-relaxed text-muted">{empty}</p>
+            <p className="text-[15px] leading-relaxed text-muted">{recorded ? "Action items will appear once AI notes are switched on." : empty}</p>
           ) : (
             actionItems.map((x, i) => (
               <div key={i} className="flex flex-wrap items-center gap-3 border-t border-line-soft py-3">

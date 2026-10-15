@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { botSessions, transcripts, type TranscriptSegment } from "@minuteflow/db";
-import { and, eq, isNotNull, isNull, not, like, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 
@@ -69,6 +69,17 @@ const MAX_ATTEMPTS = 3;
 
 /** Transcribes recorded sessions that don't have a transcript yet, one at a time. */
 export async function transcribePending(provider: TranscriptionProvider) {
+  // Sessions transcribed before this step marked them done.
+  await db
+    .update(botSessions)
+    .set({ status: "completed" })
+    .where(
+      and(
+        eq(botSessions.status, "processing"),
+        inArray(botSessions.id, db.select({ id: transcripts.botSessionId }).from(transcripts)),
+      ),
+    );
+
   const pending = await db
     .select({ id: botSessions.id, key: botSessions.recordingKey })
     .from(botSessions)
@@ -90,6 +101,8 @@ export async function transcribePending(provider: TranscriptionProvider) {
       log(`Sending ${audio.length} bytes to ${provider.name}`);
       const { language, segments } = await provider.transcribe(audio, "audio/webm");
       await db.insert(transcripts).values({ botSessionId: s.id, language, segments }).onConflictDoNothing();
+      // Summaries will move this through their own step once they exist.
+      await db.update(botSessions).set({ status: "completed" }).where(eq(botSessions.id, s.id));
       log(`Saved ${segments.length} segments`);
       attempts.delete(s.id);
     } catch (err) {
