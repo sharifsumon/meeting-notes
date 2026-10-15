@@ -24,11 +24,11 @@ export type MeetSessionOptions = {
   /** Leave after being the only participant this long. */
   aloneTimeoutMs?: number;
   /**
-   * The MinuteFlow user's display name in Meet. When set, the bot leaves `ownerGoneMs` after they
-   * leave the call. It still asks to join right away: Meet hides who's in a call from accounts
+   * Display names of the MinuteFlow users this call belongs to (one event can be on several
+   * people's calendars). The bot leaves `ownerGoneMs` after the last of them leaves the call. It still asks to join right away: Meet hides who's in a call from accounts
    * outside the host's organization, so the lobby can't tell whether the owner is there.
    */
-  ownerName?: string | null;
+  ownerNames?: string[];
   ownerGoneMs?: number;
   /** How often to log the audio level (and warn about silence). */
   levelLogMs?: number;
@@ -88,6 +88,15 @@ export function withEnglishUi(url: string) {
  * Joins a Google Meet call as a guest, records until the meeting ends (or the bot is
  * alone, removed, or hits leaveBy), then leaves. Resolves when the bot has left.
  */
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const open = new Set<BrowserContext>();
+
+/** Closes every bot browser, so running sessions end now and save what they recorded. */
+export async function closeAllBrowsers() {
+  await Promise.all([...open].map((c) => c.close().catch(() => {})));
+}
+
 export type MeetRecording = {
   joinedAt: Date;
   leftAt: Date;
@@ -105,6 +114,7 @@ export type SpeakerTurn = { name: string; startMs: number; endMs: number };
 export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecording> {
   const log = opts.log ?? console.log;
   const context = await launchContext();
+  open.add(context);
   try {
     const page = await context.newPage();
     await preparePage(page, opts.onChunk);
@@ -112,10 +122,11 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
     log(`Opening ${opts.url}`);
     await page.goto(withEnglishUi(opts.url), { waitUntil: "domcontentloaded" });
 
-    const owner = opts.ownerName ? ownerPattern(opts.ownerName) : null;
+    const names = (opts.ownerNames ?? []).filter((n) => n.trim());
+    const owner = names.length ? ownersPattern(names) : null;
     await prepareLobby(page);
 
-    await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 10 * 60_000, log, opts.onWaitingRoom);
+    await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 5 * 60_000, log, opts.onWaitingRoom);
     const joinedAt = new Date();
     log("In the meeting; recording");
 
@@ -151,6 +162,7 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
     const participants = [...seen].filter((n) => !bot.test(n) && n !== opts.botName);
     return { joinedAt, leftAt: new Date(), reason, title, participants, speakerTimeline };
   } finally {
+    open.delete(context);
     await context.close().catch(() => {});
   }
 }
@@ -184,6 +196,11 @@ async function prepareLobby(page: Page) {
 
 function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Matches any of the owners' names, but not the bot's own "Notetaker for <name>". */
+export function ownersPattern(names: string[]) {
+  return new RegExp(`(?<!for )\\b(${names.map((n) => escapeRegExp(n.trim())).join("|")})\\b`, "i");
 }
 
 /** Matches the owner's name, but not the bot's own "Notetaker for <name>". */
@@ -242,12 +259,12 @@ async function joinFromLobby(
       break;
     }
     if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
-    await page.waitForTimeout(1_000);
+    await sleep(1_000);
   }
 
   if (outcome === "denied") throw new JoinFailed("The host didn't let the bot in", "denied");
   if (outcome === "blocked") throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
-  if (outcome === "timeout") throw new JoinFailed("Nobody admitted the bot in time", "timeout");
+  if (outcome === "timeout") throw new JoinFailed(`Not admitted: nobody let the bot in within ${Math.round(admitTimeoutMs / 60_000)} minutes`, "timeout");
 }
 
 const WAITING_TEXT =
@@ -419,6 +436,7 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
       log("Someone rejoined");
       aloneSince = null;
     }
-    await page.waitForTimeout(Math.min(5_000, ownerGoneMs, aloneTimeoutMs));
+    // A plain timer: page.waitForTimeout throws once the browser is closed.
+    await sleep(Math.min(5_000, ownerGoneMs, aloneTimeoutMs));
   }
 }

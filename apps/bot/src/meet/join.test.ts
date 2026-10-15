@@ -65,7 +65,7 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
     const result = await recordMeet({
       url: fakeMeet("hideLobbyPeople=1&ownerJoinMs=12000&ownerLeaveMs=14000&callMs=60000"),
       botName: "Notetaker for Sharif",
-      ownerName: "Sharif Islam",
+      ownerNames: ["Sharif Sumon", "Sharif Islam"],
       ownerGoneMs: 2_000,
       onChunk: async () => {},
       onWaitingRoom: () => void events.push("waiting_room"),
@@ -87,7 +87,7 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
     const result = await recordMeet({
       url: fakeMeet("ownerJoinMs=600000&guests=1&callMs=5000"),
       botName: "Notetaker for Sharif",
-      ownerName: "Sharif Islam",
+      ownerNames: ["Sharif Islam"],
       ownerGoneMs: 1_000,
       onChunk: async () => {},
       leaveBy: new Date(Date.now() + 60_000),
@@ -148,6 +148,22 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
       log: () => {},
     });
     expect(times.admitted! - times.asked!).toBeGreaterThanOrEqual(4_500);
+  }, 60_000);
+
+  it("ends cleanly with the audio so far when the browsers are closed (a restart)", async () => {
+    const { recordMeet, closeAllBrowsers } = await import("./join");
+    const chunks: Buffer[] = [];
+    const running = recordMeet({
+      url: fakeMeet("callMs=60000"),
+      botName: "Notetaker for Test",
+      onChunk: async (b64) => void chunks.push(Buffer.from(b64, "base64")),
+      onAdmitted: () => void setTimeout(() => void closeAllBrowsers(), 7_000),
+      leaveBy: new Date(Date.now() + 60_000),
+      log: () => {},
+    });
+    const result = await running;
+    expect(result.reason).toMatch(/page closed|no longer in the call/);
+    expect(Buffer.concat(chunks).length).toBeGreaterThan(5_000);
   }, 60_000);
 
   it("reports when the host denies the request", async () => {

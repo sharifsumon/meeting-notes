@@ -4,6 +4,7 @@ import { JOIN_QUEUE, redisConnection, type JoinJob } from "./queue";
 import { scheduleDueMeetings } from "./scheduler";
 import { summarizePending, summarizer } from "./summarize";
 import { transcribePending, transcriptionProvider } from "./transcribe";
+import { closeAllBrowsers } from "./meet/join";
 import { runBotSession } from "./worker";
 
 const SCHEDULE_EVERY_MS = 20_000;
@@ -50,7 +51,10 @@ console.log(
 async function shutdown() {
   clearTimeout(timer);
   clearTimeout(transcribeTimer);
-  await worker.close();
+  // Recordings can run for hours; end them now so each session saves its audio before we exit.
+  const closing = worker.close();
+  await closeAllBrowsers();
+  await closing;
   process.exit(0);
 }
 process.on("SIGTERM", shutdown);

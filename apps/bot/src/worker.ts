@@ -1,12 +1,38 @@
 import { AD_HOC_MEETING_TITLE, botSessions, meetings, users } from "@minuteflow/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, isNotNull, lte } from "drizzle-orm";
 import { db } from "./db";
 import { JoinFailed, recordMeet } from "./meet/join";
+import { meetCode } from "./meet/links";
 import { botNameFor } from "./scheduler";
 import { openRecording } from "./storage";
 
 // Stay at most this long past the scheduled end if people are still talking.
 const OVERRUN_MS = 60 * 60_000;
+
+/**
+ * Everyone this call belongs to: the same event is often on several MinuteFlow calendars
+ * (colleagues, or one person's two accounts). The bot stays while any of them is in the call.
+ */
+async function ownerNamesFor(meeting: typeof meetings.$inferSelect, fallback: string | null) {
+  const code = meetCode(meeting.meetingUrl);
+  const now = new Date();
+  const rows = code
+    ? await db
+        .select({ name: users.name, url: meetings.meetingUrl })
+        .from(meetings)
+        .innerJoin(users, eq(users.id, meetings.userId))
+        .where(
+          and(
+            isNotNull(meetings.meetingUrl),
+            eq(meetings.cancelled, false),
+            lte(meetings.startsAt, new Date(now.getTime() + 60 * 60_000)),
+            gt(meetings.endsAt, now),
+          ),
+        )
+    : [];
+  const names = rows.filter((r) => meetCode(r.url) === code).map((r) => r.name);
+  return [...new Set([fallback, ...names].filter((n): n is string => Boolean(n?.trim())))];
+}
 
 /** Runs one bot session: join the meeting, record it, store the audio. */
 export async function runBotSession(botSessionId: string) {
@@ -43,8 +69,8 @@ export async function runBotSession(botSessionId: string) {
       botName: await botNameFor(meeting.id),
       onChunk,
       leaveBy: new Date(meeting.endsAt.getTime() + OVERRUN_MS),
-      // Follow the MinuteFlow user: leave shortly after they do.
-      ownerName,
+      // Follow the MinuteFlow users: leave shortly after the last of them does.
+      ownerNames: await ownerNamesFor(meeting, ownerName),
       onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
       // A meeting sent by link gets the call's name from Meet.
@@ -67,9 +93,16 @@ export async function runBotSession(botSessionId: string) {
       error: recording.bytes > 0 ? null : "No audio was captured",
     });
   } catch (err) {
+    await writes.catch(() => {});
     const message = err instanceof JoinFailed ? err.message : `Bot crashed: ${String(err)}`;
     log(message);
-    await setStatus(botSessionId, { status: "failed", error: message, leftAt: new Date() });
+    if (recording.bytes > 0) {
+      // Stopped mid-call (a restart, or the browser died): keep what was recorded and transcribe it.
+      log(`Keeping the ${recording.bytes} bytes recorded so far`);
+      await setStatus(botSessionId, { status: "processing", error: null, leftAt: new Date() });
+    } else {
+      await setStatus(botSessionId, { status: "failed", error: message, leftAt: new Date() });
+    }
   } finally {
     await writes.catch(() => {});
     await recording.close();

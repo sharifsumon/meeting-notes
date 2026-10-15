@@ -2,12 +2,14 @@ import { botSessions, meetings, users } from "@minuteflow/db";
 import { and, eq, gt, inArray, isNull, lte } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
+import { meetCode } from "./meet/links";
 import { joinQueue } from "./queue";
 
 // A bot for the same link within this window counts as the same call.
 const RECENT_MS = 6 * 60 * 60 * 1000;
 // Statuses of a bot that is (about to be) in a call.
 const ACTIVE = ["scheduled", "joining", "waiting_room", "recording"] as const;
+const RECORDED: string[] = ["processing", "completed"];
 const DUPLICATE_ERROR = "Another bot is recording this call";
 
 /**
@@ -30,7 +32,7 @@ export async function scheduleDueMeetings(now = new Date()) {
   const joinBy = new Date(now.getTime() + config.BOT_JOIN_EARLY_S * 1000);
 
   const due = await db
-    .select({ id: meetings.id, meetingUrl: meetings.meetingUrl })
+    .select({ id: meetings.id, meetingUrl: meetings.meetingUrl, startsAt: meetings.startsAt, endsAt: meetings.endsAt })
     .from(meetings)
     .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id))
     .where(
@@ -45,30 +47,33 @@ export async function scheduleDueMeetings(now = new Date()) {
     );
 
   // The same call is often on several calendars (yours and a colleague's, or two of
-  // your accounts). Send one bot per link at a time. Links are reused (recurring
-  // meetings, personal rooms), so only a bot that is still in or heading to the call counts.
-  const busy = new Set(
-    (
-      await db
-        .select({ url: meetings.meetingUrl })
-        .from(botSessions)
-        .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
-        .where(
-          and(
-            inArray(botSessions.status, [...ACTIVE]),
-            gt(botSessions.createdAt, new Date(now.getTime() - RECENT_MS)),
-          ),
-        )
-    ).map((r) => r.url),
-  );
+  // your accounts). Send one bot per call. Links are reused (recurring meetings,
+  // personal rooms), so a bot counts only while it's in or heading to the call, or if
+  // it was in the call during this meeting's time.
+  const recent = await db
+    .select({
+      url: meetings.meetingUrl,
+      status: botSessions.status,
+      joinedAt: botSessions.joinedAt,
+      leftAt: botSessions.leftAt,
+    })
+    .from(botSessions)
+    .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
+    .where(gt(botSessions.createdAt, new Date(now.getTime() - RECENT_MS)));
+  const covered = (m: (typeof due)[number]) =>
+    recent.some(
+      (r) =>
+        meetCode(r.url) === meetCode(m.meetingUrl) &&
+        ((ACTIVE as readonly string[]).includes(r.status) ||
+          (RECORDED.includes(r.status) &&
+            r.joinedAt !== null &&
+            r.joinedAt < m.endsAt &&
+            (r.leftAt ?? now) > m.startsAt)),
+    );
 
   for (const m of due) {
-    if (busy.has(m.meetingUrl)) {
-      // Checked again next tick: if the other bot leaves while this meeting is on, this one joins.
-      console.log(`Meeting ${m.id}: another bot is already in this call; not sending a second one`);
-      continue;
-    }
-    busy.add(m.meetingUrl);
+    if (covered(m)) continue; // checked again next tick
+    recent.push({ url: m.meetingUrl, status: "scheduled", joinedAt: null, leftAt: null });
     const [session] = await db
       .insert(botSessions)
       .values({ meetingId: m.id })
