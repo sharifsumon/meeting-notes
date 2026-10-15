@@ -40,14 +40,15 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
     expect(logs.join("\n")).not.toMatch(/consent message/);
   }, 60_000);
 
-  it("waits for the owner before asking to join, reports progress, and leaves after the owner does", async () => {
+  it("asks to join right away, reports progress, and leaves after the owner does", async () => {
     const { recordMeet } = await import("./join");
     const logs: string[] = [];
     const events: string[] = [];
     const start = Date.now();
 
+    // hideLobbyPeople: like Meet for accounts outside the host's organization.
     const result = await recordMeet({
-      url: fakeMeet("ownerJoinMs=4000&ownerLeaveMs=3000&callMs=60000"),
+      url: fakeMeet("hideLobbyPeople=1&ownerJoinMs=12000&ownerLeaveMs=14000&callMs=60000"),
       botName: "Notetaker for Sharif",
       ownerName: "Sharif Islam",
       ownerGoneMs: 2_000,
@@ -61,28 +62,24 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
 
     expect(result.reason).toBe("the owner left");
     expect(events).toEqual(["waiting_room", "recording"]);
-    // Joined only after the owner appeared (4s), and left well before the call's 60s end.
-    expect(result.joinedAt.getTime() - start).toBeGreaterThanOrEqual(4_000);
-    expect(result.leftAt.getTime() - start).toBeLessThan(30_000);
-    expect(logs.join("\n")).toMatch(/Sharif Islam is in the call/);
+    // Joined before the owner appeared (12s), and left well before the call's 60s end.
+    expect(result.joinedAt.getTime() - start).toBeLessThan(12_000);
+    expect(result.leftAt.getTime() - start).toBeLessThan(40_000);
   }, 60_000);
 
-  it("gives up without asking to join when the owner never shows up", async () => {
-    const { recordMeet, JoinFailed } = await import("./join");
-    const events: string[] = [];
-    await expect(
-      recordMeet({
-        url: fakeMeet("ownerJoinMs=600000"),
-        botName: "Notetaker for Sharif",
-        ownerName: "Sharif Islam",
-        ownerWaitUntil: new Date(Date.now() + 3_000),
-        onChunk: async () => {},
-        onWaitingRoom: () => void events.push("waiting_room"),
-        leaveBy: new Date(Date.now() + 60_000),
-        log: () => {},
-      }),
-    ).rejects.toSatisfy((err) => err instanceof JoinFailed && err.reason === "owner_absent");
-    expect(events).toEqual([]);
+  it("keeps recording when the owner never shows up but others are talking", async () => {
+    const { recordMeet } = await import("./join");
+    const result = await recordMeet({
+      url: fakeMeet("ownerJoinMs=600000&guests=1&callMs=5000"),
+      botName: "Notetaker for Sharif",
+      ownerName: "Sharif Islam",
+      ownerGoneMs: 1_000,
+      onChunk: async () => {},
+      leaveBy: new Date(Date.now() + 60_000),
+      aloneTimeoutMs: 1_000,
+      log: () => {},
+    });
+    expect(result.reason).toBe("everyone else left");
   }, 60_000);
 
   it("skips the consent message when chat is restricted", async () => {

@@ -24,13 +24,16 @@
     const owner = "Sharif Islam";
     const ownerJoinMs = Number(params.get("ownerJoinMs") ?? 0);
     const ownerLeaveMs = params.get("ownerLeaveMs");
-    let others = [];
+    let others = params.get("guests") ? ["Guest Two"] : [];
+    // Meet doesn't show accounts outside the host's organization who is in the call.
+    if (params.get("hideLobbyPeople")) document.getElementById("incall").hidden = true;
     const render = () => {
       document.getElementById("incall").textContent = others.length ? others.join(", ") + " is in this call" : "No one else is here";
       document.getElementById("plist").replaceChildren(...["Notetaker for Sharif", ...others].map((n) => {
         const li = document.createElement("li"); li.setAttribute("aria-label", n); li.textContent = n; return li;
       }));
     };
+    render();
     setTimeout(() => { others = [owner, "Guest Two"]; render(); }, ownerJoinMs);
     if (params.get("chatRestricted")) {
       document.getElementById("msg").disabled = true;

@@ -5,7 +5,7 @@ import { installAudioCapture } from "./capture";
 export class JoinFailed extends Error {
   constructor(
     message: string,
-    readonly reason: "denied" | "timeout" | "blocked" | "owner_absent" | "error",
+    readonly reason: "denied" | "timeout" | "blocked" | "error",
   ) {
     super(message);
     this.name = "JoinFailed";
@@ -24,12 +24,11 @@ export type MeetSessionOptions = {
   /** Leave after being the only participant this long. */
   aloneTimeoutMs?: number;
   /**
-   * The MinuteFlow user's display name in Meet. When set, the bot only asks to join once they are
-   * in the call, and leaves `ownerGoneMs` after they leave.
+   * The MinuteFlow user's display name in Meet. When set, the bot leaves `ownerGoneMs` after they
+   * leave the call. It still asks to join right away: Meet hides who's in a call from accounts
+   * outside the host's organization, so the lobby can't tell whether the owner is there.
    */
   ownerName?: string | null;
-  /** Give up if the owner hasn't shown up in the lobby by this time. */
-  ownerWaitUntil?: Date;
   ownerGoneMs?: number;
   /** Progress callbacks, used to update the bot session's status. */
   onWaitingRoom?: () => PromiseLike<unknown> | void;
@@ -97,11 +96,6 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
 
     const owner = opts.ownerName ? ownerPattern(opts.ownerName) : null;
     await prepareLobby(page);
-    if (owner) {
-      log(`Waiting for ${opts.ownerName} to join the call`);
-      await waitForOwnerInLobby(page, owner, opts.ownerWaitUntil ?? opts.leaveBy);
-      log(`${opts.ownerName} is in the call`);
-    }
 
     await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 10 * 60_000, log, opts.onWaitingRoom);
     const joinedAt = new Date();
@@ -151,21 +145,6 @@ function escapeRegExp(s: string) {
 /** Matches the owner's name, but not the bot's own "Notetaker for <name>". */
 export function ownerPattern(name: string) {
   return new RegExp(`(?<!for )\\b${escapeRegExp(name.trim())}\\b`, "i");
-}
-
-/**
- * Meet's lobby lists who is already in the call ("Sharif Islam is in this call").
- * Waits there, without asking to join, until the owner shows up.
- */
-async function waitForOwnerInLobby(page: Page, owner: RegExp, until: Date) {
-  const blocked = page.getByText(BLOCKED_TEXT);
-  for (;;) {
-    if (await blocked.first().isVisible().catch(() => false)) throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
-    if (await page.getByText(owner).first().isVisible().catch(() => false)) return;
-    if (Date.now() >= until.getTime()) throw new JoinFailed("The meeting owner never joined the call", "owner_absent");
-    if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
-    await page.waitForTimeout(5_000);
-  }
 }
 
 async function joinFromLobby(

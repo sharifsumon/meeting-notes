@@ -37,9 +37,8 @@ export async function runBotSession(botSessionId: string) {
       botName: await botNameFor(meeting.id),
       onChunk,
       leaveBy: new Date(meeting.endsAt.getTime() + OVERRUN_MS),
-      // Follow the MinuteFlow user: join once they're in the call, leave shortly after they do.
+      // Follow the MinuteFlow user: leave shortly after they do.
       ownerName,
-      ownerWaitUntil: meeting.endsAt,
       onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
       log,
@@ -56,9 +55,7 @@ export async function runBotSession(botSessionId: string) {
   } catch (err) {
     const message = err instanceof JoinFailed ? err.message : `Bot crashed: ${String(err)}`;
     log(message);
-    // Nobody to record for: the owner never showed up, so the bot never asked to join.
-    const status = err instanceof JoinFailed && err.reason === "owner_absent" ? "cancelled" : "failed";
-    await setStatus(botSessionId, { status, error: message, leftAt: new Date() });
+    await setStatus(botSessionId, { status: "failed", error: message, leftAt: new Date() });
   } finally {
     await writes.catch(() => {});
     await recording.close();
