@@ -1,0 +1,104 @@
+<!doctype html>
+<!-- A tiny stand-in for the Google Meet UI, used to test the bot end to end. -->
+<html lang="en">
+<body>
+  <div id="lobby">
+    <button aria-label="Turn off microphone">mic</button>
+    <button aria-label="Turn off camera">cam</button>
+    <p id="incall">No one else is here</p>
+    <input aria-label="Your name" id="name" />
+    <button id="ask">Ask to join</button>
+    <!-- Newer Meet: the waiting room already has a leave button. -->
+    <div id="waitroom" hidden>
+      <p>Please wait until a meeting host brings you into the call</p>
+      <button aria-label="Leave call">leave</button>
+    </div>
+  </div>
+  <div id="call" hidden>
+    <button aria-label="Chat with everyone" id="chatbtn">chat</button>
+    <div id="chat" hidden><input aria-label="Send a message" id="msg" /><p id="restricted" hidden>Only people in Example Corp can send messages</p></div>
+    <button aria-label="People" id="peoplebtn">people</button>
+    <div id="people" hidden><ul aria-label="Participants" id="plist"></ul></div>
+    <button aria-label="Turn on captions" id="ccbtn">cc</button>
+    <div role="region" aria-label="Captions" id="captions" hidden></div>
+    <button aria-label="Leave call" id="leave">leave</button>
+    <p id="alone" hidden>You're the only one here</p>
+    <ul id="log"></ul>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const callMs = Number(params.get("callMs") ?? 6000);
+    const owner = "Sharif Islam";
+    const ownerJoinMs = Number(params.get("ownerJoinMs") ?? 0);
+    const ownerLeaveMs = params.get("ownerLeaveMs");
+    let others = params.get("guests") ? ["Guest Two"] : [];
+    // Meet doesn't show accounts outside the host's organization who is in the call.
+    if (params.get("hideLobbyPeople")) document.getElementById("incall").hidden = true;
+    const render = () => {
+      document.getElementById("incall").textContent = others.length ? others.join(", ") + " is in this call" : "No one else is here";
+      document.getElementById("plist").replaceChildren(...["Notetaker for Sharif", ...others].map((n) => {
+        const li = document.createElement("li"); li.setAttribute("aria-label", n); li.textContent = n; return li;
+      }));
+    };
+    render();
+    setTimeout(() => { others = [owner, "Guest Two"]; render(); }, ownerJoinMs);
+    if (params.get("chatRestricted")) {
+      document.getElementById("msg").disabled = true;
+      document.getElementById("restricted").hidden = false;
+    }
+    const log = (t) => { const li = document.createElement("li"); li.textContent = t; document.getElementById("log").append(li); };
+
+    async function startRemoteAudio() {
+      // Loopback: pc1 sends a 440 Hz tone, pc2 receives it as a remote track (like Meet audio).
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const dest = ctx.createMediaStreamDestination();
+      osc.connect(dest); osc.start();
+      const pc1 = new RTCPeerConnection(), pc2 = new RTCPeerConnection();
+      pc1.onicecandidate = (e) => e.candidate && pc2.addIceCandidate(e.candidate);
+      pc2.onicecandidate = (e) => e.candidate && pc1.addIceCandidate(e.candidate);
+      pc2.ontrack = (e) => { const a = new Audio(); a.srcObject = new MediaStream([e.track]); a.muted = true; a.play(); };
+      dest.stream.getTracks().forEach((t) => pc1.addTrack(t, dest.stream));
+      await pc1.setLocalDescription(await pc1.createOffer());
+      await pc2.setRemoteDescription(pc1.localDescription);
+      await pc2.setLocalDescription(await pc2.createAnswer());
+      await pc1.setRemoteDescription(pc2.localDescription);
+    }
+
+    document.getElementById("ask").onclick = () => {
+      log("name:" + document.getElementById("name").value);
+      window.__askedAt = Date.now();
+      if (params.get("waitingRoomLeave")) document.getElementById("waitroom").hidden = false;
+      setTimeout(() => {
+        if (params.get("deny")) { document.body.append("Someone in the call denied your request to join"); return; }
+        document.getElementById("lobby").hidden = true;
+        document.getElementById("call").hidden = false;
+        document.getElementById("waitroom").hidden = true;
+        startRemoteAudio();
+        if (ownerLeaveMs) setTimeout(() => { others = others.filter((n) => n !== owner); render(); }, Number(ownerLeaveMs));
+        setTimeout(() => { others = []; render(); document.getElementById("alone").hidden = false; }, callMs);
+      }, Number(params.get("admitMs") ?? 500));
+    };
+    document.getElementById("chatbtn").onclick = () => { const c = document.getElementById("chat"); c.hidden = !c.hidden; document.getElementById("people").hidden = true; };
+    document.getElementById("peoplebtn").onclick = () => { const c = document.getElementById("people"); c.hidden = !c.hidden; document.getElementById("chat").hidden = true; };
+    document.getElementById("msg").onkeydown = (e) => { if (e.key === "Enter") { log("chat:" + e.target.value); window.__lastChat = e.target.value; } };
+    if (params.get("title")) document.title = "Meet - " + params.get("title");
+    // Captions: each block is an avatar, the speaker's name, then their words (like Meet).
+    const say = (name, words, everyMs) => {
+      const block = document.createElement("div");
+      block.innerHTML = '<div><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="1" height="1"><span></span></div><div class="words"></div>';
+      block.querySelector("span").textContent = name;
+      document.getElementById("captions").append(block);
+      words.forEach((w, i) => setTimeout(() => { block.querySelector(".words").textContent += w + " "; }, i * everyMs));
+    };
+    document.getElementById("ccbtn").onclick = () => {
+      document.getElementById("captions").hidden = false;
+      document.getElementById("ccbtn").setAttribute("aria-label", "Turn off captions");
+      if (!params.get("captions")) return;
+      setTimeout(() => say("Sharif Islam", ["Hello", "everyone", "let's", "start"], 500), 500);
+      setTimeout(() => say("Guest Two", ["Sounds", "good", "to", "me"], 500), 3500);
+    };
+    document.getElementById("leave").onclick = () => (document.getElementById("call").hidden = true);
+  </script>
+</body>
+</html>

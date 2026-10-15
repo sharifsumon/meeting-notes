@@ -1,0 +1,25 @@
+[Unit]
+Description=MinuteFlow web app
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=meetingnotes
+Group=meetingnotes
+WorkingDirectory=/opt/meetingnotes/app/apps/web
+# Read by systemd as root, so the file can stay root-only (chmod 600).
+EnvironmentFile=/root/meeting-notes.env
+Environment=NODE_ENV=production
+ExecStart=/opt/meetingnotes/app/apps/web/node_modules/.bin/next start -H 127.0.0.1 -p 3000
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/meetingnotes -/opt/meetingnotes/app/apps/web/.next/cache
+
+[Install]
+WantedBy=multi-user.target
