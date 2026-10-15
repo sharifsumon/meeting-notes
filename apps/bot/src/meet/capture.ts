@@ -62,6 +62,7 @@ export function installAudioCapture() {
 
   w.__mfStart = () => {
     if (recorder) return;
+    (w as Win & { __mfT0?: number }).__mfT0 = performance.now();
     ctx = new AudioContext();
     dest = ctx.createMediaStreamDestination();
     // A silent source keeps the recording timeline running while nobody speaks.
@@ -116,4 +117,58 @@ export function installAudioCapture() {
     samples = 0;
     return level;
   };
+}
+
+/**
+ * Runs inside the meeting page once captions are on. Meet's captions show each speaker's name
+ * above what they say; this notes who spoke when (relative to the recording's start) so the
+ * transcript's "Speaker N" labels can be swapped for names afterwards.
+ *
+ * Meet's class names change often, so blocks are found by shape: a caption block holds the
+ * speaker's avatar image, their name on the first line and the words below it.
+ */
+export function installCaptionWatcher() {
+  type Turn = { name: string; startMs: number; endMs: number };
+  type Win = typeof window & { __mfT0?: number; __mfSpeakers?: () => Turn[] };
+  const w = window as Win;
+  if (w.__mfSpeakers) return;
+
+  // Captions trail speech by about a second.
+  const LAG_MS = 1_000;
+  const turns: Turn[] = [];
+  const seen = new WeakMap<Element, { turn: Turn; text: string }>();
+  const now = () => Math.max(0, performance.now() - (w.__mfT0 ?? 0));
+
+  const blockFor = (img: Element, region: Element) => {
+    let el: Element | null = img.parentElement;
+    while (el && el !== region) {
+      const lines = (el as HTMLElement).innerText.split("\n").filter((l) => l.trim());
+      if (lines.length >= 2) return { el, lines };
+      el = el.parentElement;
+    }
+    return null;
+  };
+
+  setInterval(() => {
+    const region = document.querySelector('[role="region"][aria-label*="aption" i]');
+    if (!region) return;
+    const t = now();
+    for (const img of Array.from(region.querySelectorAll("img"))) {
+      const block = blockFor(img, region);
+      if (!block) continue;
+      const name = block.lines[0]!.trim();
+      const text = block.lines.slice(1).join(" ");
+      const known = seen.get(block.el);
+      if (!known || known.turn.name !== name) {
+        const turn = { name, startMs: Math.max(0, t - LAG_MS - 1_000), endMs: Math.max(0, t - LAG_MS) };
+        turns.push(turn);
+        seen.set(block.el, { turn, text });
+      } else if (known.text !== text) {
+        known.text = text;
+        known.turn.endMs = Math.max(known.turn.endMs, t - LAG_MS);
+      }
+    }
+  }, 500);
+
+  w.__mfSpeakers = () => turns.filter((t) => t.name.toLowerCase() !== "you");
 }

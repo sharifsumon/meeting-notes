@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectMeetingLink, platformForUrl } from "./meeting-links";
+import { detectMeetingLink, meetCode, platformForUrl } from "./meeting-links";
 
 describe("detectMeetingLink", () => {
   it("finds a Google Meet link", () => {
@@ -42,5 +42,14 @@ describe("detectMeetingLink", () => {
 describe("platformForUrl", () => {
   it("falls back to other", () => {
     expect(platformForUrl("https://example.com/call")).toBe("other");
+  });
+});
+
+describe("meetCode", () => {
+  it("extracts the code whatever the link looks like", () => {
+    expect(meetCode("https://meet.google.com/ofw-zegm-ueq?authuser=1")).toBe("ofw-zegm-ueq");
+    expect(meetCode("https://MEET.google.com/OFW-ZEGM-UEQ/")).toBe("ofw-zegm-ueq");
+    expect(meetCode("https://zoom.us/j/123")).toBeNull();
+    expect(meetCode(null)).toBeNull();
   });
 });

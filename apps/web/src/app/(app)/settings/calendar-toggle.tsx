@@ -1,9 +1,25 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
-import { setCalendarEnabled } from "../actions";
+import { setAutoRecord, setCalendarEnabled } from "../actions";
 
 export function CalendarToggle({ calendarId, enabled }: { calendarId: string; enabled: boolean }) {
+  return <Toggle label="Watch" enabled={enabled} save={(next) => setCalendarEnabled(calendarId, next)} />;
+}
+
+export function AutoRecordToggle({ enabled }: { enabled: boolean }) {
+  return <Toggle label="Record all my meetings automatically" enabled={enabled} save={setAutoRecord} />;
+}
+
+function Toggle({
+  label,
+  enabled,
+  save,
+}: {
+  label: string;
+  enabled: boolean;
+  save: (next: boolean) => Promise<{ error?: string }>;
+}) {
   const [pending, startTransition] = useTransition();
   const [checked, setChecked] = useOptimistic(enabled);
   const [error, setError] = useState<string>();
@@ -11,7 +27,7 @@ export function CalendarToggle({ calendarId, enabled }: { calendarId: string; en
   return (
     <label className="flex shrink-0 cursor-pointer items-center gap-3 text-sm font-semibold text-ink-2">
       {error && <span className="font-normal text-red-600">{error}</span>}
-      Watch
+      {label}
       <input
         type="checkbox"
         role="switch"
@@ -21,7 +37,7 @@ export function CalendarToggle({ calendarId, enabled }: { calendarId: string; en
           const next = e.target.checked;
           startTransition(async () => {
             setChecked(next);
-            setError((await setCalendarEnabled(calendarId, next)).error);
+            setError((await save(next)).error);
           });
         }}
         className="peer sr-only"

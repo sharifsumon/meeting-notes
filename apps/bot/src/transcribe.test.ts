@@ -72,3 +72,25 @@ describe("deepgram language fallback", () => {
     expect(result.language).toBe("en");
   });
 });
+
+describe("nameSpeakers", () => {
+  const seg = (speaker: string, startMs: number, endMs: number) => ({ speaker, startMs, endMs, text: "x" });
+
+  it("gives each numbered speaker the name captions showed at the same time", async () => {
+    const { nameSpeakers } = await import("./transcribe");
+    const named = nameSpeakers(
+      [seg("Speaker 1", 0, 4_000), seg("Speaker 2", 4_500, 8_000), seg("Speaker 1", 9_000, 10_000), seg("Speaker 3", 20_000, 21_000)],
+      [
+        { name: "Sharif Islam", startMs: 200, endMs: 4_200 },
+        { name: "Guest Two", startMs: 4_400, endMs: 8_300 },
+        { name: "Sharif Islam", startMs: 8_800, endMs: 10_000 },
+      ],
+    );
+    expect(named.map((s) => s.speaker)).toEqual(["Sharif Islam", "Guest Two", "Sharif Islam", "Speaker 3"]);
+  });
+
+  it("leaves labels alone without captions", async () => {
+    const { nameSpeakers } = await import("./transcribe");
+    expect(nameSpeakers([seg("Speaker 1", 0, 1_000)], [])[0]!.speaker).toBe("Speaker 1");
+  });
+});

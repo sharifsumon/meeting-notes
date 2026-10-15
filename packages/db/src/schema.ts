@@ -31,6 +31,12 @@ export const users = pgTable("users", {
   email: text("email").unique(),
   emailVerified: timestamp("email_verified", { mode: "date", withTimezone: true }),
   image: text("image"),
+  // When the user agreed to MinuteFlow reading their calendar and recording their Meet calls.
+  // Nothing is recorded automatically before this is set.
+  consentedAt: timestamp("consented_at", { withTimezone: true }),
+  consentVersion: text("consent_version"),
+  // Send the notetaker to every Google Meet event on the user's calendars.
+  autoRecord: boolean("auto_record").notNull().default(true),
   createdAt: createdAt(),
 });
 
@@ -108,6 +114,9 @@ export const calendars = pgTable(
   (t) => [uniqueIndex("calendars_user_provider_external_idx").on(t.userId, t.provider, t.externalId)],
 );
 
+/** Title of meetings started from a pasted link until the bot learns the call's name. */
+export const AD_HOC_MEETING_TITLE = "Meeting from link";
+
 export const meetings = pgTable(
   "meetings",
   {
@@ -125,7 +134,7 @@ export const meetings = pgTable(
     platform: meetingPlatform("platform"),
     cancelled: boolean("cancelled").notNull().default(false),
     // Whether the note-taker bot should join this meeting.
-    recordEnabled: boolean("record_enabled").notNull().default(false),
+    recordEnabled: boolean("record_enabled").notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -150,6 +159,8 @@ export const botSessionStatus = pgEnum("bot_session_status", [
   "cancelled",
 ]);
 
+export type SpeakerTurn = { name: string; startMs: number; endMs: number };
+
 export const botSessions = pgTable(
   "bot_sessions",
   {
@@ -163,6 +174,10 @@ export const botSessions = pgTable(
     joinedAt: timestamp("joined_at", { withTimezone: true }),
     leftAt: timestamp("left_at", { withTimezone: true }),
     error: text("error"),
+    // Who Meet's captions showed speaking, relative to the start of the recording.
+    speakerTimeline: jsonb("speaker_timeline").$type<SpeakerTurn[]>().notNull().default([]),
+    // Names seen in the call's People list.
+    participants: jsonb("participants").$type<string[]>().notNull().default([]),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

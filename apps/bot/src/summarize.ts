@@ -13,7 +13,7 @@ export type MeetingNotes = {
 /** Writes notes from a transcript. Swap the implementation to change model or provider. */
 export interface Summarizer {
   readonly name: string;
-  summarize(input: { title: string; segments: TranscriptSegment[] }): Promise<MeetingNotes>;
+  summarize(input: { title: string; segments: TranscriptSegment[]; participants?: string[] }): Promise<MeetingNotes>;
 }
 
 function clock(ms: number) {
@@ -99,18 +99,20 @@ export function groq(apiKey: string, model: string): Summarizer {
 
   return {
     name: `Groq (${model})`,
-    async summarize({ title, segments }) {
+    async summarize({ title, segments, participants = [] }) {
+      // Names help the model attribute action items when the transcript only numbers speakers.
+      const header = participants.length ? `Meeting: ${title}\nPeople in the call: ${participants.join(", ")}` : `Meeting: ${title}`;
       const system = `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}`;
       // Small chunks keep each request inside Groq's free-tier tokens-per-minute limit.
       const chunks = transcriptChunks(segments, 20_000);
       if (chunks.length === 1) {
-        return parseNotes(await complete(system, `Meeting: ${title}\n\nTranscript:\n${chunks[0]}`));
+        return parseNotes(await complete(system, `${header}\n\nTranscript:\n${chunks[0]}`));
       }
       const parts: MeetingNotes[] = [];
       for (const [i, chunk] of chunks.entries()) {
         parts.push(
           parseNotes(
-            await complete(system, `Meeting: ${title}\nPart ${i + 1} of ${chunks.length} of the transcript:\n${chunk}`),
+            await complete(system, `${header}\nPart ${i + 1} of ${chunks.length} of the transcript:\n${chunk}`),
           ),
         );
       }
@@ -138,7 +140,13 @@ const MAX_ATTEMPTS = 3;
 /** Writes notes for transcribed sessions that don't have them yet, then marks the session done. */
 export async function summarizePending(provider: Summarizer) {
   const pending = await db
-    .select({ sessionId: botSessions.id, meetingId: meetings.id, title: meetings.title, segments: transcripts.segments })
+    .select({
+      sessionId: botSessions.id,
+      meetingId: meetings.id,
+      title: meetings.title,
+      participants: botSessions.participants,
+      segments: transcripts.segments,
+    })
     .from(botSessions)
     .innerJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
@@ -157,7 +165,7 @@ export async function summarizePending(provider: Summarizer) {
     const log = (msg: string) => console.log(`[summarize ${s.sessionId}] ${msg}`);
     try {
       log(`Summarizing ${s.segments.length} segments with ${provider.name}`);
-      const result = await provider.summarize({ title: s.title, segments: s.segments });
+      const result = await provider.summarize({ title: s.title, segments: s.segments, participants: s.participants });
       await db
         .insert(notes)
         .values({ meetingId: s.meetingId, ...result })

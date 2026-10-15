@@ -15,6 +15,17 @@ Object.assign(process.env, {
 const fakeMeet = (query: string) =>
   `${pathToFileURL(path.resolve(import.meta.dirname, "../../test/fake-meet.html"))}?${query}`;
 
+describe("titleFromTabTitle", () => {
+  it("keeps a real name and drops Meet's own words and bare codes", async () => {
+    const { titleFromTabTitle } = await import("./join");
+    expect(titleFromTabTitle("Meet - Weekly sync")).toBe("Weekly sync");
+    expect(titleFromTabTitle("Weekly sync – Google Meet")).toBe("Weekly sync");
+    expect(titleFromTabTitle("Meet – ofw-zegm-ueq")).toBeNull();
+    expect(titleFromTabTitle("Google Meet")).toBeNull();
+    expect(titleFromTabTitle("")).toBeNull();
+  });
+});
+
 describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", () => {
   it("joins, records remote audio, posts the consent notice and leaves when alone", async () => {
     const { recordMeet } = await import("./join");
@@ -84,6 +95,27 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
       log: () => {},
     });
     expect(result.reason).toBe("everyone else left");
+  }, 60_000);
+
+  it("notes who the captions show speaking, the participants and the call's name", async () => {
+    const { recordMeet } = await import("./join");
+    const titles: string[] = [];
+    const result = await recordMeet({
+      url: fakeMeet("captions=1&title=Weekly%20sync&callMs=8000"),
+      botName: "Notetaker for Sharif",
+      onChunk: async () => {},
+      onTitle: (t) => void titles.push(t),
+      leaveBy: new Date(Date.now() + 60_000),
+      aloneTimeoutMs: 1_000,
+      log: () => {},
+    });
+    expect(titles).toEqual(["Weekly sync"]);
+    expect(result.participants).toEqual(["Sharif Islam", "Guest Two"]);
+    const [first, second] = result.speakerTimeline;
+    expect(result.speakerTimeline.map((t) => t.name)).toEqual(["Sharif Islam", "Guest Two"]);
+    // Sharif speaks first, then Guest Two about three seconds later (polling blurs this by up to a second).
+    expect(first!.endMs).toBeGreaterThan(first!.startMs);
+    expect(second!.startMs - first!.startMs).toBeGreaterThan(1_000);
   }, 60_000);
 
   it("skips the consent message when chat is restricted", async () => {

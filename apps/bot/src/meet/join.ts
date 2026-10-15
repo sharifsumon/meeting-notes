@@ -1,6 +1,6 @@
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { config, headless } from "../config";
-import { installAudioCapture } from "./capture";
+import { installAudioCapture, installCaptionWatcher } from "./capture";
 
 export class JoinFailed extends Error {
   constructor(
@@ -35,6 +35,8 @@ export type MeetSessionOptions = {
   /** Progress callbacks, used to update the bot session's status. */
   onWaitingRoom?: () => PromiseLike<unknown> | void;
   onAdmitted?: (joinedAt: Date) => PromiseLike<unknown> | void;
+  /** Called once in the call with the call's name, when Meet shows one. */
+  onTitle?: (title: string) => PromiseLike<unknown> | void;
   log?: (msg: string) => void;
 };
 
@@ -86,7 +88,21 @@ export function withEnglishUi(url: string) {
  * Joins a Google Meet call as a guest, records until the meeting ends (or the bot is
  * alone, removed, or hits leaveBy), then leaves. Resolves when the bot has left.
  */
-export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: Date; leftAt: Date; reason: string }> {
+export type MeetRecording = {
+  joinedAt: Date;
+  leftAt: Date;
+  reason: string;
+  /** The call's name as Meet shows it, when it has one beyond the meeting code. */
+  title: string | null;
+  /** Names seen in the People list, without the bot. */
+  participants: string[];
+  /** Who the captions showed speaking, in ms from the start of the recording. */
+  speakerTimeline: SpeakerTurn[];
+};
+
+export type SpeakerTurn = { name: string; startMs: number; endMs: number };
+
+export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecording> {
   const log = opts.log ?? console.log;
   const context = await launchContext();
   try {
@@ -107,22 +123,33 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<{ joinedAt: 
     const levelTimer = setInterval(() => void logLevel(page, log), opts.levelLogMs ?? 60_000);
     await Promise.resolve(opts.onAdmitted?.(joinedAt)).catch((err) => log(`Status update failed: ${err}`));
     await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
+    await enableCaptions(page, log).catch((err) => log(`Could not turn on captions: ${err}`));
+    const title = await meetingTitle(page);
+    if (title) await Promise.resolve(opts.onTitle?.(title)).catch((err) => log(`Title update failed: ${err}`));
+    const seen = new Set<string>();
 
     const reason = await waitForEnd(page, {
       leaveBy: opts.leaveBy,
       aloneTimeoutMs: opts.aloneTimeoutMs ?? 60_000,
       owner,
       ownerGoneMs: opts.ownerGoneMs ?? 30_000,
+      seen,
       log,
     });
     log(`Leaving: ${reason}`);
     clearInterval(levelTimer);
+    const speakerTimeline = await page
+      .evaluate(() => (window as unknown as { __mfSpeakers?: () => SpeakerTurn[] }).__mfSpeakers?.() ?? [])
+      .catch(() => []);
+    log(`Captions named ${new Set(speakerTimeline.map((t) => t.name)).size} speakers in ${speakerTimeline.length} turns`);
 
     await page
       .evaluate(() => (window as unknown as { __mfStop: () => Promise<void> }).__mfStop())
       .catch((err) => log(`Stopping recorder failed: ${err}`));
     await page.getByRole("button", { name: /leave call/i }).click({ timeout: 5_000 }).catch(() => {});
-    return { joinedAt, leftAt: new Date(), reason };
+    const bot = ownerPattern(opts.botName);
+    const participants = [...seen].filter((n) => !bot.test(n) && n !== opts.botName);
+    return { joinedAt, leftAt: new Date(), reason, title, participants, speakerTimeline };
   } finally {
     await context.close().catch(() => {});
   }
@@ -249,15 +276,55 @@ async function participants(page: Page): Promise<string[] | null> {
     .catch(() => null);
 }
 
+/** Turns on Meet's captions so the bot can see who is speaking. */
+async function enableCaptions(page: Page, log: (m: string) => void) {
+  const region = page.getByRole("region", { name: /captions/i }).first();
+  const button = page.getByRole("button", { name: /turn on captions/i }).first();
+  if (await button.isVisible().catch(() => false)) {
+    await button.click({ timeout: 5_000 });
+  } else {
+    // "c" is Meet's captions shortcut; the button can be hidden in a narrow window.
+    await page.keyboard.press("c");
+  }
+  const on = await region
+    .waitFor({ timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!on) {
+    log("Captions didn't turn on; speakers will be numbered");
+    return;
+  }
+  await page.evaluate(installCaptionWatcher);
+  log("Captions on; noting who speaks");
+}
+
+const MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i;
+
+/** The call's name from the tab title ("Meet – Weekly sync"), or null when it's only the code. */
+export function titleFromTabTitle(tabTitle: string): string | null {
+  const name = tabTitle
+    .replace(/^\s*(google\s+)?meet\s*[-–—:|]\s*/i, "")
+    .replace(/\s*[-–—|]\s*(google\s+)?meet\s*$/i, "")
+    .trim();
+  if (!name || name === tabTitle.trim() || MEET_CODE.test(name)) return null;
+  return name;
+}
+
+async function meetingTitle(page: Page) {
+  return titleFromTabTitle(await page.title().catch(() => ""));
+}
+
 type EndOptions = {
   leaveBy: Date;
   aloneTimeoutMs: number;
   owner: RegExp | null;
   ownerGoneMs: number;
+  /** Collects every name seen in the People list. */
+  seen: Set<string>;
   log: (m: string) => void;
 };
 
-async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGoneMs, log }: EndOptions) {
+async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGoneMs, seen, log }: EndOptions) {
   const inCall = page.getByRole("button", { name: /leave call/i });
   const aloneBanner = page.getByText(/you're the only one here|everyone else has left/i);
   const ended = page.getByText(/you've been removed|the call has ended|you left the meeting/i);
@@ -272,6 +339,7 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
     if (!(await inCall.isVisible().catch(() => false))) return "no longer in the call";
 
     const people = await participants(page);
+    people?.forEach((p) => seen.add(p.trim()));
 
     if (owner && people) {
       if (people.some((p) => owner.test(p))) {

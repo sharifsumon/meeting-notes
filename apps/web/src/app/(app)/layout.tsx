@@ -1,6 +1,7 @@
-import { calendars, meetings } from "@minuteflow/db";
+import { calendars, meetings, users } from "@minuteflow/db";
 import { and, count, eq, gte, isNull, or } from "drizzle-orm";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { Logo, initials } from "@/components/ui";
 import { db } from "@/lib/db";
@@ -11,6 +12,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const userId = await requireUserId();
   const session = await auth();
   const user = session?.user;
+
+  // New users agree to calendar access and automatic recording before anything else.
+  const [consent] = await db().select({ at: users.consentedAt }).from(users).where(eq(users.id, userId));
+  if (!consent?.at) redirect("/welcome");
 
   const [upcoming] = await db()
     .select({ n: count() })

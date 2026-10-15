@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { botSessions, transcripts, type TranscriptSegment } from "@minuteflow/db";
+import { botSessions, transcripts, type SpeakerTurn, type TranscriptSegment } from "@minuteflow/db";
 import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
@@ -100,6 +100,39 @@ export function deepgram(apiKey: string, extraLanguages: string[] = []): Transcr
   };
 }
 
+/**
+ * Swaps Deepgram's "Speaker N" labels for the names Meet's captions showed speaking at the same
+ * time. Each label gets the name it overlaps most, one name per label; labels with no clear
+ * match stay numbered.
+ */
+export function nameSpeakers(segments: TranscriptSegment[], timeline: SpeakerTurn[]): TranscriptSegment[] {
+  if (!timeline.length) return segments;
+  const overlap = new Map<string, Map<string, number>>();
+  for (const seg of segments) {
+    for (const turn of timeline) {
+      const ms = Math.min(seg.endMs, turn.endMs) - Math.max(seg.startMs, turn.startMs);
+      if (ms <= 0) continue;
+      const byName = overlap.get(seg.speaker) ?? new Map<string, number>();
+      byName.set(turn.name, (byName.get(turn.name) ?? 0) + ms);
+      overlap.set(seg.speaker, byName);
+    }
+  }
+  const pairs = [...overlap].flatMap(([label, byName]) => {
+    const total = [...byName.values()].reduce((a, b) => a + b, 0);
+    return [...byName].map(([name, ms]) => ({ label, name, ms, share: ms / total }));
+  });
+  pairs.sort((a, b) => b.ms - a.ms);
+  const names = new Map<string, string>();
+  const used = new Set<string>();
+  for (const p of pairs) {
+    // A name has to account for most of what the captions showed while this label spoke.
+    if (names.has(p.label) || used.has(p.name) || p.share < 0.5) continue;
+    names.set(p.label, p.name);
+    used.add(p.name);
+  }
+  return segments.map((seg) => ({ ...seg, speaker: names.get(seg.speaker) ?? seg.speaker }));
+}
+
 /** The configured provider, or null when no transcription key is set. */
 export function transcriptionProvider(): TranscriptionProvider | null {
   if (!config.DEEPGRAM_API_KEY) return null;
@@ -127,7 +160,7 @@ export async function transcribePending(provider: TranscriptionProvider) {
   }
 
   const pending = await db
-    .select({ id: botSessions.id, key: botSessions.recordingKey })
+    .select({ id: botSessions.id, key: botSessions.recordingKey, timeline: botSessions.speakerTimeline })
     .from(botSessions)
     .leftJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .where(
@@ -145,7 +178,9 @@ export async function transcribePending(provider: TranscriptionProvider) {
     try {
       const audio = await readFile(path.join(config.STORAGE_DIR, s.key!));
       log(`Sending ${audio.length} bytes to ${provider.name}`);
-      const { language, segments } = await provider.transcribe(audio, "audio/webm");
+      const result = await provider.transcribe(audio, "audio/webm");
+      const { language } = result;
+      const segments = nameSpeakers(result.segments, s.timeline);
       await db.insert(transcripts).values({ botSessionId: s.id, language, segments }).onConflictDoNothing();
       // With AI notes on, the summary step marks the session done; empty transcripts have nothing to summarize.
       if (!config.GROQ_API_KEY || segments.length === 0) {

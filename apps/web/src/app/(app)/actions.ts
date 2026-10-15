@@ -1,11 +1,11 @@
 "use server";
 
-import { calendars, meetings } from "@minuteflow/db";
-import { and, eq } from "drizzle-orm";
+import { AD_HOC_MEETING_TITLE, botSessions, calendars, meetings, users } from "@minuteflow/db";
+import { and, eq, gt, isNotNull, lte, notInArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { detectMeetingLink } from "@/lib/meeting-links";
+import { detectMeetingLink, meetCode } from "@/lib/meeting-links";
 import { GoogleReconnectRequired } from "@/lib/google/client";
 import { requireUserId } from "@/lib/session";
 import { syncAll, syncMeetings } from "@/lib/sync";
@@ -52,9 +52,81 @@ export async function setCalendarEnabled(calendarId: string, enabled: boolean): 
   return result;
 }
 
-const AD_HOC_DURATION_MS = 2 * 60 * 60 * 1000;
+/** Turns on the notetaker for every upcoming Meet call that doesn't have a bot yet. */
+async function recordUpcoming(userId: string) {
+  const withBot = db().select({ id: botSessions.meetingId }).from(botSessions);
+  await db()
+    .update(meetings)
+    .set({ recordEnabled: true })
+    .where(
+      and(
+        eq(meetings.userId, userId),
+        eq(meetings.platform, "google_meet"),
+        eq(meetings.cancelled, false),
+        gt(meetings.endsAt, new Date()),
+        notInArray(meetings.id, withBot),
+      ),
+    );
+}
 
-/** Sends the bot to a meeting right now from a pasted link, without a calendar event. */
+/** "Record all my meetings automatically". Turning it on also covers meetings already synced. */
+export async function setAutoRecord(enabled: boolean): Promise<ActionResult> {
+  const userId = await requireUserId();
+  await db().update(users).set({ autoRecord: enabled }).where(eq(users.id, userId));
+  if (enabled) await recordUpcoming(userId);
+  revalidatePath("/settings");
+  revalidatePath("/meetings");
+  return {};
+}
+
+const CONSENT_VERSION = "2026-10-15";
+
+/** The onboarding agreement: read the calendar and record Meet calls automatically. */
+export async function giveConsent(formData: FormData) {
+  const userId = await requireUserId();
+  if (formData.get("agree") !== "on") redirect("/welcome?missing=1");
+  await db()
+    .update(users)
+    .set({ consentedAt: new Date(), consentVersion: CONSENT_VERSION, autoRecord: true })
+    .where(eq(users.id, userId));
+  let reconnect = false;
+  try {
+    await syncAll(userId);
+  } catch (err) {
+    reconnect = err instanceof GoogleReconnectRequired;
+    if (!reconnect) console.error("Calendar sync after consent failed", err);
+  }
+  await recordUpcoming(userId);
+  redirect(reconnect ? "/settings?reconnect=1" : "/meetings");
+}
+
+const AD_HOC_DURATION_MS = 2 * 60 * 60 * 1000;
+// A calendar event starting this soon (or already running) is the call the link is for.
+const MATCH_EARLY_MS = 15 * 60 * 1000;
+
+/** The user's calendar event for this Meet call happening now, if there is one. */
+async function calendarMeetingFor(userId: string, url: string, now: Date) {
+  const code = meetCode(url);
+  if (!code) return null;
+  const rows = await db()
+    .select({ id: meetings.id, title: meetings.title, meetingUrl: meetings.meetingUrl })
+    .from(meetings)
+    .where(
+      and(
+        eq(meetings.userId, userId),
+        isNotNull(meetings.calendarId),
+        eq(meetings.cancelled, false),
+        lte(meetings.startsAt, new Date(now.getTime() + MATCH_EARLY_MS)),
+        gt(meetings.endsAt, now),
+      ),
+    );
+  return rows.find((r) => meetCode(r.meetingUrl) === code) ?? null;
+}
+
+/**
+ * Sends the bot to a meeting right now from a pasted link. When the link belongs to a calendar
+ * event happening now, the bot goes to that meeting (and keeps its title).
+ */
 export async function sendBotNow(link: string): Promise<ActionResult> {
   const userId = await requireUserId();
   const detected = detectMeetingLink(link.trim());
@@ -62,11 +134,21 @@ export async function sendBotNow(link: string): Promise<ActionResult> {
   if (detected.platform !== "google_meet") return { error: "Only Google Meet links are supported for now." };
 
   const now = new Date();
+  // Make sure an event created a moment ago is in the table.
+  await syncMeetings(userId).catch((err) => console.error("Calendar sync before sending the bot failed", err));
+  const event = await calendarMeetingFor(userId, detected.url, now);
+  if (event) {
+    await db().update(meetings).set({ recordEnabled: true }).where(eq(meetings.id, event.id));
+    revalidatePath("/meetings");
+    return {};
+  }
+
   await db()
     .insert(meetings)
     .values({
       userId,
-      title: "Meeting from link",
+      // The bot replaces this with the call's name from Meet when it has one.
+      title: AD_HOC_MEETING_TITLE,
       startsAt: now,
       endsAt: new Date(now.getTime() + AD_HOC_DURATION_MS),
       meetingUrl: detected.url,

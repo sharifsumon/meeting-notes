@@ -1,9 +1,9 @@
-import { calendars } from "@minuteflow/db";
+import { calendars, users } from "@minuteflow/db";
 import { asc, desc, eq } from "drizzle-orm";
 import { signIn } from "@/auth";
 import { db } from "@/lib/db";
 import { requireUserId } from "@/lib/session";
-import { CalendarToggle } from "./calendar-toggle";
+import { AutoRecordToggle, CalendarToggle } from "./calendar-toggle";
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ reconnect?: string }> }) {
   const userId = await requireUserId();
@@ -14,12 +14,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     .from(calendars)
     .where(eq(calendars.userId, userId))
     .orderBy(desc(calendars.isPrimary), asc(calendars.name));
+  const [user] = await db().select({ autoRecord: users.autoRecord }).from(users).where(eq(users.id, userId));
 
   return (
     <main className="flex w-full max-w-[1120px] flex-col gap-6 px-4 pt-7 pb-12 md:px-8">
       <div>
         <h1 className="text-[28px] font-extrabold tracking-[-0.02em]">Settings</h1>
-        <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches for meetings.</p>
+        <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches, and whether the notetaker records your calls on its own.</p>
       </div>
 
       {reconnect && (
@@ -37,6 +38,17 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </form>
         </div>
       )}
+
+      <section className="flex flex-col gap-3">
+        <h2 className="section-label">Recording</h2>
+        <div className="card flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+          <p className="min-w-0 flex-[1_1_320px] text-sm text-muted">
+            The notetaker joins every Google Meet call on your watched calendars about a minute before it starts.
+            You can still skip a single meeting with its own switch.
+          </p>
+          <AutoRecordToggle enabled={user?.autoRecord ?? true} />
+        </div>
+      </section>
 
       {rows.length === 0 ? (
         <p className="text-muted">No calendars yet. Open Meetings and press Sync calendar.</p>

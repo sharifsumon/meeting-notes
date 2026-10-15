@@ -1,5 +1,5 @@
-import { botSessions, meetings, users } from "@minuteflow/db";
-import { eq } from "drizzle-orm";
+import { AD_HOC_MEETING_TITLE, botSessions, meetings, users } from "@minuteflow/db";
+import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { JoinFailed, recordMeet } from "./meet/join";
 import { botNameFor } from "./scheduler";
@@ -24,6 +24,12 @@ export async function runBotSession(botSessionId: string) {
     return;
   }
 
+  // With one bot per server, a call that overlaps another waits in the queue; once it is over there's nothing to join.
+  if (meeting.endsAt.getTime() <= Date.now()) {
+    await setStatus(botSessionId, { status: "cancelled", error: "Not recorded: the notetaker was busy with another call" });
+    return;
+  }
+
   const log = (msg: string) => console.log(`[bot ${botSessionId}] ${msg}`);
   const recording = await openRecording(meeting.userId, botSessionId);
   // Write chunks strictly in order.
@@ -41,6 +47,12 @@ export async function runBotSession(botSessionId: string) {
       ownerName,
       onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
+      // A meeting sent by link gets the call's name from Meet.
+      onTitle: (title) =>
+        db
+          .update(meetings)
+          .set({ title })
+          .where(and(eq(meetings.id, meeting.id), eq(meetings.title, AD_HOC_MEETING_TITLE))),
       log,
     });
     await writes;
@@ -50,6 +62,8 @@ export async function runBotSession(botSessionId: string) {
       status: recording.bytes > 0 ? "processing" : "failed",
       joinedAt: result.joinedAt,
       leftAt: result.leftAt,
+      participants: result.participants,
+      speakerTimeline: result.speakerTimeline,
       error: recording.bytes > 0 ? null : "No audio was captured",
     });
   } catch (err) {
