@@ -1,17 +1,32 @@
 import { botSessions, meetings, users } from "@minuteflow/db";
-import { and, eq, gt, isNull, lte, notInArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 import { joinQueue } from "./queue";
 
 // A bot for the same link within this window counts as the same call.
 const RECENT_MS = 6 * 60 * 60 * 1000;
+// Statuses of a bot that is (about to be) in a call.
+const ACTIVE = ["scheduled", "joining", "waiting_room", "recording"] as const;
+const DUPLICATE_ERROR = "Another bot is recording this call";
 
 /**
  * Finds meetings marked for recording that are about to start and have no bot yet,
  * creates a bot session for each and queues the join. Safe to run repeatedly.
  */
 export async function scheduleDueMeetings(now = new Date()) {
+  // Earlier versions cancelled a copy for good, even against a bot that had already left.
+  // Clear those so the meeting can still get its bot.
+  await db
+    .delete(botSessions)
+    .where(
+      and(
+        eq(botSessions.status, "cancelled"),
+        eq(botSessions.error, DUPLICATE_ERROR),
+        inArray(botSessions.meetingId, db.select({ id: meetings.id }).from(meetings).where(gt(meetings.endsAt, now))),
+      ),
+    );
+
   const joinBy = new Date(now.getTime() + config.BOT_JOIN_EARLY_S * 1000);
 
   const due = await db
@@ -30,7 +45,8 @@ export async function scheduleDueMeetings(now = new Date()) {
     );
 
   // The same call is often on several calendars (yours and a colleague's, or two of
-  // your accounts). Send one bot per link.
+  // your accounts). Send one bot per link at a time. Links are reused (recurring
+  // meetings, personal rooms), so only a bot that is still in or heading to the call counts.
   const busy = new Set(
     (
       await db
@@ -39,7 +55,7 @@ export async function scheduleDueMeetings(now = new Date()) {
         .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
         .where(
           and(
-            notInArray(botSessions.status, ["failed", "cancelled"]),
+            inArray(botSessions.status, [...ACTIVE]),
             gt(botSessions.createdAt, new Date(now.getTime() - RECENT_MS)),
           ),
         )
@@ -48,11 +64,8 @@ export async function scheduleDueMeetings(now = new Date()) {
 
   for (const m of due) {
     if (busy.has(m.meetingUrl)) {
-      // Record the decision so this copy isn't picked up again later.
-      await db
-        .insert(botSessions)
-        .values({ meetingId: m.id, status: "cancelled", error: "Another bot is recording this call" })
-        .onConflictDoNothing({ target: botSessions.meetingId });
+      // Checked again next tick: if the other bot leaves while this meeting is on, this one joins.
+      console.log(`Meeting ${m.id}: another bot is already in this call; not sending a second one`);
       continue;
     }
     busy.add(m.meetingUrl);
