@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { config } from "./config";
 import { JOIN_QUEUE, redisConnection, type JoinJob } from "./queue";
 import { scheduleDueMeetings } from "./scheduler";
+import { summarizePending, summarizer } from "./summarize";
 import { transcribePending, transcriptionProvider } from "./transcribe";
 import { runBotSession } from "./worker";
 
@@ -27,20 +28,23 @@ async function tick() {
 }
 void tick();
 
+// After a call: transcribe the recording, then write AI notes from the transcript.
 const provider = transcriptionProvider();
+const notesWriter = summarizer();
 let transcribeTimer: NodeJS.Timeout | undefined;
 async function transcribeTick() {
   try {
-    await transcribePending(provider!);
+    if (provider) await transcribePending(provider);
+    if (notesWriter) await summarizePending(notesWriter);
   } catch (err) {
-    console.error("Transcription failed:", err);
+    console.error("Post-call processing failed:", err);
   }
   transcribeTimer = setTimeout(transcribeTick, TRANSCRIBE_EVERY_MS);
 }
-if (provider) void transcribeTick();
+if (provider || notesWriter) void transcribeTick();
 
 console.log(
-  `Bot worker started (concurrency ${config.BOT_CONCURRENCY}; transcription: ${provider?.name ?? "off, no DEEPGRAM_API_KEY"})`,
+  `Bot worker started (concurrency ${config.BOT_CONCURRENCY}; transcription: ${provider?.name ?? "off, no DEEPGRAM_API_KEY"}; notes: ${notesWriter?.name ?? "off, no GROQ_API_KEY"})`,
 );
 
 async function shutdown() {

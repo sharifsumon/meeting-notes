@@ -17,6 +17,9 @@ const schema = z.object({
   BOT_JOIN_EARLY_S: z.coerce.number().int().nonnegative().default(60),
   // Transcribes recordings when set. Without it, recordings are kept but not transcribed.
   DEEPGRAM_API_KEY: z.string().min(1).optional(),
+  // Writes AI notes (summary, decisions, action items) when set.
+  GROQ_API_KEY: z.string().min(1).optional(),
+  GROQ_MODEL: z.string().min(1).optional(),
 });
 
 export const config = schema.parse(process.env);

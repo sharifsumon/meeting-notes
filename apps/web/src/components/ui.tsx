@@ -26,14 +26,23 @@ const STATUS: Record<BotStatus, { label: string; className: string }> = {
   joining: { label: "Bot joining", className: "bg-sky-100 text-sky-800" },
   waiting_room: { label: "Waiting to be admitted", className: "bg-amber-100 text-amber-800" },
   recording: { label: "Recording", className: "bg-red-100 text-red-700" },
-  processing: { label: "Transcribing", className: "bg-sky-100 text-sky-800" },
+  processing: { label: "Processing", className: "bg-sky-100 text-sky-800" },
   completed: { label: "Recorded", className: "bg-green-100 text-green-800" },
   failed: { label: "Bot couldn't record", className: "bg-red-50 text-red-700" },
   cancelled: { label: "Skipped", className: "bg-slate-100 text-slate-600" },
 };
 
 /** The pill shown on a meeting: the bot's progress if it has one, otherwise whether recording is planned. */
-export function StatusPill({ status, recordEnabled }: { status: BotStatus | null; recordEnabled: boolean }) {
+export function StatusPill({
+  status,
+  recordEnabled,
+  hasNotes = false,
+}: {
+  status: BotStatus | null;
+  recordEnabled: boolean;
+  hasNotes?: boolean;
+}) {
+  if (status === "completed" && hasNotes) return <span className="pill bg-green-100 text-green-800">Notes ready</span>;
   if (status) {
     const s = STATUS[status];
     return <span className={`pill ${s.className}`}>{s.label}</span>;

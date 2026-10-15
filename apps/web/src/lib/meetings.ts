@@ -1,5 +1,5 @@
 import "server-only";
-import { botSessions, calendars, meetings } from "@minuteflow/db";
+import { botSessions, calendars, meetings, notes } from "@minuteflow/db";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
 import type { BotStatus } from "@/components/ui";
 import { db } from "@/lib/db";
@@ -16,6 +16,7 @@ export type MeetingRow = {
   recordEnabled: boolean;
   calendarName: string;
   status: BotStatus | null;
+  hasNotes: boolean;
 };
 
 const columns = {
@@ -28,6 +29,7 @@ const columns = {
   recordEnabled: meetings.recordEnabled,
   calendarName: calendars.name,
   status: botSessions.status,
+  noteId: notes.id,
 };
 
 function visible(userId: string): SQL {
@@ -49,9 +51,12 @@ function toRow(r: {
   recordEnabled: boolean;
   calendarName: string | null;
   status: BotStatus | null;
+  noteId: string | null;
 }): MeetingRow {
+  const { noteId, ...rest } = r;
   return {
-    ...r,
+    ...rest,
+    hasNotes: noteId !== null,
     calendarName: r.calendarName ?? "Sent from a link",
     startsAt: r.startsAt.toISOString(),
     endsAt: r.endsAt.toISOString(),
@@ -63,7 +68,8 @@ function base() {
     .select(columns)
     .from(meetings)
     .leftJoin(calendars, eq(meetings.calendarId, calendars.id))
-    .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id));
+    .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id))
+    .leftJoin(notes, eq(notes.meetingId, meetings.id));
 }
 
 /** Meetings that haven't ended yet, soonest first. */

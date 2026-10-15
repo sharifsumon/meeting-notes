@@ -15,7 +15,7 @@ const BOT_LABEL = {
   joining: "Joining the call",
   waiting_room: "Waiting to be admitted",
   recording: "Recording now",
-  processing: "Transcribing",
+  processing: "Transcribing and writing notes",
   completed: "Done",
   failed: "Couldn't record",
   cancelled: "Skipped",
@@ -59,7 +59,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill status={bot?.status ?? null} recordEnabled={m.recordEnabled && !ended} />
+              <StatusPill status={bot?.status ?? null} recordEnabled={m.recordEnabled && !ended} hasNotes={Boolean(note)} />
               <span className="pill border border-accent-soft bg-sky-50 font-medium text-accent">
                 {row.calendarName ?? "Sent from a link"}
               </span>
