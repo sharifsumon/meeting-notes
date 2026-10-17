@@ -40,6 +40,7 @@ export async function scheduleDueMeetings(now = new Date()) {
       and(
         eq(meetings.recordEnabled, true),
         eq(meetings.cancelled, false),
+        isNull(meetings.deletedAt),
         eq(meetings.platform, "google_meet"),
         or(lte(meetings.startsAt, joinBy), isNotNull(meetings.botRequestedAt)),
         gt(meetings.endsAt, now),

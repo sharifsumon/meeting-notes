@@ -38,6 +38,7 @@ function visible(userId: string): SQL {
     eq(meetings.userId, userId),
     or(isNull(meetings.calendarId), eq(calendars.enabled, true)),
     eq(meetings.cancelled, false),
+    isNull(meetings.deletedAt),
   )!;
 }
 

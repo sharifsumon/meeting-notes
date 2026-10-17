@@ -50,6 +50,13 @@
       "when": 1792252882590,
       "tag": "0006_meeting_minutes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792255326651,
+      "tag": "0007_delete_meetings",
+      "breakpoints": true
     }
   ]
 }

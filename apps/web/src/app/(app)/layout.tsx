@@ -3,6 +3,7 @@ import { and, count, eq, gte, isNull, or } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
+import { Toaster } from "@/components/toast";
 import { Logo, initials } from "@/components/ui";
 import { db } from "@/lib/db";
 import { requireUserId } from "@/lib/session";
@@ -26,6 +27,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         eq(meetings.userId, userId),
         or(isNull(meetings.calendarId), eq(calendars.enabled, true)),
         eq(meetings.cancelled, false),
+        isNull(meetings.deletedAt),
         gte(meetings.endsAt, new Date()),
       ),
     );
@@ -75,6 +77,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </header>
         {children}
       </div>
+      <Toaster />
     </div>
   );
 }

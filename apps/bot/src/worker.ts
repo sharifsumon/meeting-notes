@@ -42,10 +42,10 @@ export async function runBotSession(botSessionId: string) {
     .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
     .innerJoin(users, eq(users.id, meetings.userId))
     .where(eq(botSessions.id, botSessionId));
-  if (!row) throw new Error(`Bot session ${botSessionId} not found`);
+  if (!row) return console.log(`Bot session ${botSessionId} no longer exists (meeting deleted); skipping`);
   const { session, meeting, ownerName } = row;
   if (session.status !== "scheduled") return; // already ran or was cancelled
-  if (!meeting.meetingUrl || !meeting.recordEnabled || meeting.cancelled) {
+  if (!meeting.meetingUrl || !meeting.recordEnabled || meeting.cancelled || meeting.deletedAt) {
     await setStatus(botSessionId, { status: "cancelled" });
     return;
   }

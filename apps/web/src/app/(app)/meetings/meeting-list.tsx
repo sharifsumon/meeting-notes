@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { Icon, PlatformChip, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui";
 import type { MeetingRow } from "@/lib/meetings";
 import { RecordSwitch } from "./record-switch";
+import { DeleteMeetingButton } from "./delete-meeting";
 import { SendBotNowButton } from "./send-bot-now";
 
 const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" });
@@ -79,6 +80,8 @@ function MeetingCard({ meeting: m }: { meeting: MeetingRow }) {
   const ended = new Date(m.endsAt) < new Date();
   // The switch only makes sense before the bot has started.
   const canToggle = supported && !ended && (m.status === null || m.status === "scheduled");
+  // A meeting can't be deleted while the bot is in the call.
+  const busy = m.status === "joining" || m.status === "waiting_room" || m.status === "recording";
 
   return (
     <article className="card flex flex-wrap items-center gap-x-6 gap-y-4 px-5 py-[18px]">
@@ -107,6 +110,7 @@ function MeetingCard({ meeting: m }: { meeting: MeetingRow }) {
         <Link href={`/meetings/${m.id}`} className="btn-dark">
           Open Details
         </Link>
+        {!busy && <DeleteMeetingButton meetingId={m.id} title={m.title} />}
       </div>
     </article>
   );

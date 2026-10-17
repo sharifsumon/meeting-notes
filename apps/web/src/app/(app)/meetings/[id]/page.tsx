@@ -1,5 +1,5 @@
 import { botSessions, calendars, meetings, notes, transcripts } from "@minuteflow/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { LocalTime } from "@/components/local-time";
@@ -7,6 +7,7 @@ import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui
 import { db } from "@/lib/db";
 import { requireUserId } from "@/lib/session";
 import { RecordSwitch } from "../record-switch";
+import { DeleteMeetingButton } from "../delete-meeting";
 import { JoinMeetingLink, SendBotNowButton } from "../send-bot-now";
 import { AudioPlayer } from "./audio-player";
 import { NotesTabs } from "./notes-tabs";
@@ -44,7 +45,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
     .from(meetings)
     .leftJoin(calendars, eq(meetings.calendarId, calendars.id))
     .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id))
-    .where(and(eq(meetings.id, id), eq(meetings.userId, userId)))
+    .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .limit(1);
   if (!row) notFound();
   const { meeting: m, bot } = row;
@@ -109,6 +110,9 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
                 <Icon name="download" size={17} />
                 Download audio
               </a>
+            )}
+            {!(bot && ["joining", "waiting_room", "recording"].includes(bot.status)) && (
+              <DeleteMeetingButton meetingId={m.id} title={m.title} redirectTo="/meetings" />
             )}
           </div>
         </div>

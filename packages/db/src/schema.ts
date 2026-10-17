@@ -137,6 +137,8 @@ export const meetings = pgTable(
     recordEnabled: boolean("record_enabled").notNull().default(true),
     // Set by "Send bot now": the bot joins right away instead of at the start time.
     botRequestedAt: timestamp("bot_requested_at", { withTimezone: true }),
+    // Set when the user deletes a calendar meeting. The row stays so calendar sync doesn't bring it back.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -71,7 +71,7 @@ export function Logo({ size = 32 }: { size?: number }) {
   );
 }
 
-type IconName = "meetings" | "calendar" | "settings" | "clock" | "back" | "download" | "spark" | "search" | "check" | "video" | "chevron-left" | "chevron-right" | "refresh";
+type IconName = "meetings" | "calendar" | "settings" | "clock" | "back" | "download" | "spark" | "search" | "check" | "video" | "chevron-left" | "chevron-right" | "refresh" | "trash";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   meetings: (
@@ -119,6 +119,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  trash: <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />,
   "chevron-left": <path d="m15 18-6-6 6-6" />,
   "chevron-right": <path d="m9 18 6-6-6-6" />,
   refresh: (

@@ -38,6 +38,9 @@
 @utility btn-cta {
   @apply btn bg-cta text-[15px] font-bold text-cta-ink hover:bg-orange-400;
 }
+@utility btn-danger {
+  @apply btn bg-red-600 text-white hover:bg-red-700;
+}
 @utility btn-outline {
   @apply btn border border-line bg-white text-ink hover:bg-page;
 }

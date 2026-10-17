@@ -1,9 +1,12 @@
 "use server";
 
-import { AD_HOC_MEETING_TITLE, botSessions, calendars, meetings, users } from "@minuteflow/db";
-import { and, eq, gt, isNotNull, lte, notInArray } from "drizzle-orm";
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import { AD_HOC_MEETING_TITLE, botSessions, calendars, meetings, notes, users } from "@minuteflow/db";
+import { and, eq, gt, inArray, isNotNull, isNull, lte, notInArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { env } from "@/env";
 import { db } from "@/lib/db";
 import { detectMeetingLink, meetCode } from "@/lib/meeting-links";
 import { GoogleReconnectRequired } from "@/lib/google/client";
@@ -36,7 +39,7 @@ export async function setRecordEnabled(meetingId: string, enabled: boolean) {
   await db()
     .update(meetings)
     .set({ recordEnabled: enabled })
-    .where(and(eq(meetings.id, meetingId), eq(meetings.userId, userId)));
+    .where(and(eq(meetings.id, meetingId), eq(meetings.userId, userId), isNull(meetings.deletedAt)));
   revalidatePath("/meetings");
 }
 
@@ -63,6 +66,7 @@ async function recordUpcoming(userId: string) {
         eq(meetings.userId, userId),
         eq(meetings.platform, "google_meet"),
         eq(meetings.cancelled, false),
+        isNull(meetings.deletedAt),
         gt(meetings.endsAt, new Date()),
         notInArray(meetings.id, withBot),
       ),
@@ -92,6 +96,7 @@ export async function sendBotToMeeting(meetingId: string): Promise<ActionResult>
         eq(meetings.userId, userId),
         eq(meetings.platform, "google_meet"),
         eq(meetings.cancelled, false),
+        isNull(meetings.deletedAt),
         gt(meetings.endsAt, new Date()),
         notInArray(meetings.id, withBot),
       ),
@@ -139,6 +144,7 @@ async function calendarMeetingFor(userId: string, url: string, now: Date) {
         eq(meetings.userId, userId),
         isNotNull(meetings.calendarId),
         eq(meetings.cancelled, false),
+        isNull(meetings.deletedAt),
         lte(meetings.startsAt, new Date(now.getTime() + MATCH_EARLY_MS)),
         gt(meetings.endsAt, now),
       ),
@@ -179,5 +185,64 @@ export async function sendBotNow(link: string): Promise<ActionResult> {
       recordEnabled: true,
     });
   revalidatePath("/meetings");
+  return {};
+}
+
+// A bot in one of these states is in (or about to be in) the call.
+const BOT_BUSY = ["joining", "waiting_room", "recording"] as const;
+
+/**
+ * Deletes a meeting with its recording, transcript, notes and bot sessions. A calendar meeting
+ * keeps a deleted marker so the next calendar sync doesn't bring it back; the calendar event
+ * itself is left alone.
+ */
+export async function deleteMeeting(meetingId: string): Promise<ActionResult> {
+  const userId = await requireUserId();
+  const [meeting] = await db()
+    .select({ id: meetings.id, calendarId: meetings.calendarId })
+    .from(meetings)
+    .where(and(eq(meetings.id, meetingId), eq(meetings.userId, userId), isNull(meetings.deletedAt)));
+  if (!meeting) return { error: "This meeting was already deleted." };
+
+  const sessions = await db()
+    .select({ id: botSessions.id, status: botSessions.status, key: botSessions.recordingKey })
+    .from(botSessions)
+    .where(eq(botSessions.meetingId, meetingId));
+  if (sessions.some((s) => (BOT_BUSY as readonly string[]).includes(s.status))) {
+    return { error: "The notetaker is in this call right now. Delete the meeting after it leaves." };
+  }
+
+  // Stop the bot first so it can't join while the rest is removed. A queued join finds no session and skips.
+  if (meeting.calendarId) {
+    await db()
+      .update(meetings)
+      .set({ deletedAt: new Date(), recordEnabled: false, botRequestedAt: null })
+      .where(eq(meetings.id, meetingId));
+  }
+  if (sessions.length) {
+    // Transcripts go with their bot session.
+    await db()
+      .delete(botSessions)
+      .where(
+        inArray(
+          botSessions.id,
+          sessions.map((s) => s.id),
+        ),
+      );
+  }
+  await db().delete(notes).where(eq(notes.meetingId, meetingId));
+  // Meetings sent from a link aren't on a calendar, so there's nothing to keep.
+  if (!meeting.calendarId) await db().delete(meetings).where(eq(meetings.id, meetingId));
+
+  const root = path.resolve(env().STORAGE_DIR);
+  for (const s of sessions) {
+    if (!s.key) continue;
+    const file = path.resolve(root, s.key);
+    if (!file.startsWith(root + path.sep)) continue;
+    await rm(file, { force: true }).catch((err) => console.error(`Couldn't delete recording ${file}`, err));
+  }
+
+  revalidatePath("/meetings");
+  revalidatePath("/calendar");
   return {};
 }
