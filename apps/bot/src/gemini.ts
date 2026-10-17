@@ -13,6 +13,7 @@ const CHUNK_S = 600;
 const PROMPT = `Transcribe this meeting recording verbatim.
 - Write Bangla in Bengali script and English words in Latin script, exactly as spoken. Do not translate, correct or summarise.
 - Leave out silence, music and background noise. Never invent words that weren't said.
+- Names and terms that may come up: MinuteFlow, Minute Flow, Google Meet.
 - Split the transcript into short segments at natural pauses or speaker changes.
 - "start" and "end" are seconds from the start of this recording.`;
 
@@ -28,7 +29,7 @@ const SCHEMA = {
 type GeminiResponse = { candidates?: { content?: { parts?: { text?: string }[] } }[] };
 
 /** Gemini transcribes Bangla and calls that switch between Bangla and English. */
-export function gemini(apiKey: string, model = "gemini-2.5-flash") {
+export function gemini(apiKey: string, model = "gemini-3.8-flash") {
   async function transcribeChunk(ogg: Buffer, offsetMs: number): Promise<WhisperSegment[]> {
     for (let attempt = 0; ; attempt++) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
