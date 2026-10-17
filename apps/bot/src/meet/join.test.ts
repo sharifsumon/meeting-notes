@@ -216,3 +216,14 @@ describe("dedupeNames", () => {
     expect(dedupeNames(["Guest Two", "guest  two"])).toEqual(["guest  two"]);
   });
 });
+
+describe("fullName", () => {
+  it("uses the People list's fuller form of a caption name", async () => {
+    const { fullName } = await import("./names");
+    const people = ["Mohammed Shariful Islam", "Rayyan Ahmed"];
+    expect(fullName("Shariful Islam", people)).toBe("Mohammed Shariful Islam");
+    expect(fullName("Rayyan", people)).toBe("Rayyan Ahmed");
+    expect(fullName("Speaker 2", people)).toBe("Speaker 2");
+    expect(fullName("Guest", people)).toBe("Guest");
+  });
+});

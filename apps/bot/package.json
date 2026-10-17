@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "login": "tsx src/login.ts"
+    "login": "tsx src/login.ts",
+    "retranscribe": "tsx src/retranscribe.ts"
   },
   "dependencies": {
     "@minuteflow/db": "workspace:*",

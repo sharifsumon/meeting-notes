@@ -15,7 +15,8 @@ const MAX_BYTES = 24 * 1024 * 1024;
 const CHUNK_S = 300;
 
 // Showing Whisper a mixed sentence keeps it writing each language as spoken instead of translating.
-const MIXED_PROMPT = "আমরা আজকে meeting শুরু করি। Let's check the deployment, তারপর আমরা timeline নিয়ে কথা বলব।";
+// Kept to words, not a sentence: Whisper repeats a sentence-like prompt as if someone said it.
+const MIXED_PROMPT = "Bangla, English, meeting, deadline, deploy, বাংলা, মিটিং";
 
 /** Groq's Whisper, which handles Bangla and calls that switch between Bangla and English. */
 export function groqWhisper(apiKey: string, model = "whisper-large-v3") {

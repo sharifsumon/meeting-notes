@@ -4,8 +4,9 @@ import { botSessions, transcripts, type SpeakerTurn, type TranscriptSegment } fr
 import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
-import { isBotName } from "./meet/names";
-import { assignSpeakers, groqWhisper, scriptLanguage } from "./whisper";
+import { fullName, isBotName } from "./meet/names";
+import { gemini } from "./gemini";
+import { assignSpeakers, groqWhisper, scriptLanguage, type WhisperSegment } from "./whisper";
 
 /** Turns a recording into speaker-labelled segments. Swap the implementation to change services. */
 export interface TranscriptionProvider {
@@ -37,21 +38,17 @@ type Attempt = {
   languageConfidence: number;
   confidence: number;
   segments: TranscriptSegment[];
-  /** Deepgram's confidence for each of `segments`. */
-  segmentConfidence: number[];
 };
 
 function attempt(body: DeepgramResponse, language?: string): Attempt {
   const channel = body.results?.channels?.[0];
   const segments = deepgramSegments(body);
-  const spoken = (body.results?.utterances ?? []).filter((u) => u.transcript.trim());
   return {
     language: language ?? channel?.detected_language ?? null,
     languageConfidence: channel?.language_confidence ?? 0,
     // An empty transcript says nothing about the language, so it never wins.
     confidence: segments.length ? (channel?.alternatives?.[0]?.confidence ?? 0) : 0,
     segments,
-    segmentConfidence: spoken.map((u) => u.confidence ?? 0),
   };
 }
 
@@ -71,52 +68,10 @@ export function bestAttempt(attempts: Attempt[]): Attempt {
   return attempts.reduce((best, a) => (a.confidence > best.confidence ? a : best));
 }
 
-/** How much more confident another language's transcript of a stretch must be to replace it. */
-export const SWITCH_MARGIN = 0.15;
-// A language counts as spoken in the call once it covers this share of the lines.
-const MIXED_SHARE = 0.1;
+/** Writes the words of a call without telling speakers apart; Deepgram's diarization adds who spoke. */
+export type LineTranscriber = { readonly name: string; transcribe(audio: Buffer, language?: string): Promise<WhisperSegment[]> };
 
-/**
- * Builds one transcript for a call that switches between languages (Bangla and English, say).
- * Deepgram transcribes a whole file in one language, so the best attempt keeps its speakers and
- * timing, and each line is swapped for another language's transcript of the same stretch when
- * that one is clearly more confident. The language reads "bn,en" when both are spoken.
- */
-export function mergeAttempts(attempts: Attempt[]): { language: string | null; segments: TranscriptSegment[] } {
-  const base = bestAttempt(attempts);
-  const others = attempts.filter((a) => a !== base && a.segments.length);
-  const lineLanguage: (string | null)[] = [];
-  const segments = base.segments.map((seg, i) => {
-    let best = { language: base.language, confidence: base.segmentConfidence[i] ?? 0, text: seg.text };
-    for (const other of others) {
-      // Lines of the other transcript whose middle falls inside this one.
-      const inside = other.segments
-        .map((o, j) => ({ o, confidence: other.segmentConfidence[j] ?? 0 }))
-        .filter(({ o }) => {
-          const mid = (o.startMs + o.endMs) / 2;
-          return mid >= seg.startMs && mid <= seg.endMs;
-        });
-      if (!inside.length) continue;
-      const ms = inside.reduce((n, { o }) => n + Math.max(1, o.endMs - o.startMs), 0);
-      const confidence = inside.reduce((n, { o, confidence: c }) => n + c * Math.max(1, o.endMs - o.startMs), 0) / ms;
-      if (confidence > best.confidence + SWITCH_MARGIN) {
-        best = { language: other.language, confidence, text: inside.map(({ o }) => o.text).join(" ") };
-      }
-    }
-    lineLanguage.push(best.language);
-    return best.text === seg.text ? seg : { ...seg, text: best.text };
-  });
-
-  const counts = new Map<string, number>();
-  for (const l of lineLanguage) if (l) counts.set(l.split("-")[0]!, (counts.get(l.split("-")[0]!) ?? 0) + 1);
-  const spoken = [...counts]
-    .filter(([, n]) => n / Math.max(1, segments.length) >= MIXED_SHARE)
-    .sort((a, b) => b[1] - a[1])
-    .map(([l]) => l);
-  return { language: spoken.length > 1 ? spoken.join(",") : base.language, segments };
-}
-
-export function deepgram(apiKey: string, extraLanguages: string[] = [], whisper?: ReturnType<typeof groqWhisper>): TranscriptionProvider {
+export function deepgram(apiKey: string, extraLanguages: string[] = [], bangla?: LineTranscriber): TranscriptionProvider {
   async function listen(audio: Buffer, mimeType: string, language?: string) {
     const url = new URL("https://api.deepgram.com/v1/listen");
     for (const [k, v] of Object.entries({
@@ -143,34 +98,32 @@ export function deepgram(apiKey: string, extraLanguages: string[] = [], whisper?
     name: "Deepgram",
     async transcribe(audio, mimeType) {
       const auto = await listen(audio, mimeType);
-      if (whisper && needsExtraLanguages(auto)) {
+      if (bangla && needsExtraLanguages(auto)) {
         // Deepgram transcribes Bangla poorly and can't switch languages mid-call; Whisper writes the
         // words and Deepgram says who spoke them.
         try {
           // Deepgram doesn't know Bangla, so it guesses a neighbour (often Hindi). Anything but English means Bangla here.
           const pin = auto.language?.startsWith("en") ? undefined : "bn";
-          const lines = await whisper.transcribe(audio, pin);
+          const lines = await bangla.transcribe(audio, pin);
           if (lines.length) {
             const segments = assignSpeakers(lines, auto.segments);
             const language = scriptLanguage(segments) ?? auto.language;
-            console.log(`[transcribe] ${whisper.name}: ${segments.length} lines, ${language ?? "unknown"} (Deepgram guessed ${auto.language ?? "?"})`);
+            console.log(`[transcribe] ${bangla.name}: ${segments.length} lines, ${language ?? "unknown"} (Deepgram guessed ${auto.language ?? "?"})`);
             return { language, segments };
           }
         } catch (err) {
-          console.error(`[transcribe] ${whisper.name} failed, using Deepgram only: ${err}`);
+          console.error(`[transcribe] ${bangla.name} failed, using Deepgram only: ${err}`);
         }
       }
       const attempts = [auto];
       if (needsExtraLanguages(auto)) {
-        // Calls in Bangla often switch to English, so English gets its own pass to merge from.
-        const english = auto.language?.startsWith("en") ? [] : ["en"];
-        for (const language of [...extraLanguages, ...english]) attempts.push(await listen(audio, mimeType, language));
+        for (const language of extraLanguages) attempts.push(await listen(audio, mimeType, language));
       }
-      const merged = mergeAttempts(attempts);
+      const best = bestAttempt(attempts);
       console.log(
-        `[deepgram] ${attempts.map((a) => `${a.language ?? "?"}=${a.confidence.toFixed(2)}`).join(", ")} → ${merged.language ?? "unknown"}`,
+        `[deepgram] ${attempts.map((a) => `${a.language ?? "?"}=${a.confidence.toFixed(2)}`).join(", ")} → ${best.language ?? "unknown"}`,
       );
-      return merged;
+      return { language: best.language, segments: best.segments };
     },
   };
 }
@@ -218,13 +171,30 @@ export function nameOnlySpeaker(segments: TranscriptSegment[], participants: str
   return segments.map((s) => ({ ...s, speaker: participants[0]! }));
 }
 
+/** Puts people's names on a transcript's numbered speakers, from captions and Meet's People list. */
+export function nameTranscript(segments: TranscriptSegment[], timeline: SpeakerTurn[], participants: string[]) {
+  const people = participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME]));
+  return nameOnlySpeaker(nameSpeakers(segments, timeline), people).map((seg) => ({ ...seg, speaker: fullName(seg.speaker, people) }));
+}
+
 /** The configured provider, or null when no transcription key is set. */
 export function transcriptionProvider(): TranscriptionProvider | null {
   if (!config.DEEPGRAM_API_KEY) return null;
   const extra = config.TRANSCRIBE_EXTRA_LANGUAGES.split(",").map((l) => l.trim()).filter(Boolean);
-  // Bangla and mixed calls go through Whisper when the Groq key is set.
-  const whisper = config.GROQ_API_KEY ? groqWhisper(config.GROQ_API_KEY, config.GROQ_WHISPER_MODEL) : undefined;
-  return deepgram(config.DEEPGRAM_API_KEY, extra, whisper);
+  return deepgram(config.DEEPGRAM_API_KEY, extra, banglaTranscriber(config.TRANSCRIBE_BANGLA_PROVIDER));
+}
+
+/** The transcriber for calls that aren't clearly English; undefined means Deepgram's own Bangla. */
+export function banglaTranscriber(choice: "deepgram" | "whisper" | "gemini"): LineTranscriber | undefined {
+  if (choice === "whisper") {
+    if (config.GROQ_API_KEY) return groqWhisper(config.GROQ_API_KEY, config.GROQ_WHISPER_MODEL);
+    console.error("[transcribe] TRANSCRIBE_BANGLA_PROVIDER=whisper needs GROQ_API_KEY; using Deepgram");
+  }
+  if (choice === "gemini") {
+    if (config.GEMINI_API_KEY) return gemini(config.GEMINI_API_KEY, config.GEMINI_MODEL);
+    console.error("[transcribe] TRANSCRIBE_BANGLA_PROVIDER=gemini needs GEMINI_API_KEY; using Deepgram");
+  }
+  return undefined;
 }
 
 const FAILED_PREFIX = "Transcription failed";
@@ -272,8 +242,7 @@ export async function transcribePending(provider: TranscriptionProvider) {
       log(`Sending ${audio.length} bytes to ${provider.name}`);
       const result = await provider.transcribe(audio, "audio/webm");
       const { language } = result;
-      const people = s.participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME]));
-      const segments = nameOnlySpeaker(nameSpeakers(result.segments, s.timeline), people);
+      const segments = nameTranscript(result.segments, s.timeline, s.participants);
       await db.insert(transcripts).values({ botSessionId: s.id, language, segments }).onConflictDoNothing();
       // With AI notes on, the summary step marks the session done; empty transcripts have nothing to summarize.
       if (!config.GROQ_API_KEY || segments.length === 0) {

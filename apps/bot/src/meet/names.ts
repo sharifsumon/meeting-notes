@@ -29,3 +29,14 @@ export function dedupeNames(names: string[]): string[] {
     });
   });
 }
+
+/**
+ * The fullest form of a name among the participants: captions may say "Shariful Islam" while the
+ * People list says "Mohammed Shariful Islam".
+ */
+export function fullName(name: string, participants: string[]): string {
+  const merged = dedupeNames([name, ...participants]);
+  if (merged.includes(name.trim())) return name;
+  const w = words(name);
+  return participants.find((p) => merged.includes(p.trim()) && w.every((x) => words(p).includes(x))) ?? name;
+}
