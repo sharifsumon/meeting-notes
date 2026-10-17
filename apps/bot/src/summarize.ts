@@ -12,6 +12,7 @@ import {
 import { and, eq, inArray, isNull, like, not, or, sql } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
+import { isBotName } from "./meet/names";
 
 export type MeetingNotes = NoteContent;
 
@@ -244,7 +245,9 @@ export async function summarizePending(provider: Summarizer) {
     try {
       log(`Summarizing ${s.segments.length} segments with ${provider.name}`);
       const bilingual = speaksBangla(s.language, s.segments);
-      const input = { title: s.title, segments: s.segments, participants: s.participants };
+      // Sessions recorded before the bot left itself out list it as a participant.
+      const participants = s.participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME]));
+      const input = { title: s.title, segments: s.segments, participants };
       const result = await provider.summarize(bilingual ? { ...input, language: "English" } : input);
       const translations: Record<string, MeetingNotes> = bilingual ? { bn: await provider.translate(result, "Bangla (বাংলা)") } : {};
       await db

@@ -11,6 +11,8 @@ const schema = z.object({
   // Chrome profile signed in to the bot's own Google account (see `pnpm login`).
   // Meet refuses many signed-out guests; when set, the bot joins as that account.
   BOT_PROFILE_DIR: z.string().min(1).optional(),
+  // The name Meet shows for the bot's Google account, so the bot leaves itself out of attendee lists.
+  BOT_ACCOUNT_NAME: z.string().min(1).default("Minute Flow"),
   // How many meetings this worker records at once (each is one browser).
   BOT_CONCURRENCY: z.coerce.number().int().positive().default(2),
   // Join this many seconds before the scheduled start.

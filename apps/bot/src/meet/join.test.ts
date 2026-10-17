@@ -118,6 +118,20 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
     expect(second!.startMs - first!.startMs).toBeGreaterThan(1_000);
   }, 60_000);
 
+  it("waits for slow captions instead of toggling them off again, and leaves itself out of the people", async () => {
+    const { recordMeet } = await import("./join");
+    const result = await recordMeet({
+      url: fakeMeet("captions=1&ccDelayMs=5000&callMs=14000&botListedAs=Minute%20Flow"),
+      botName: "Notetaker for Sharif",
+      onChunk: async () => {},
+      leaveBy: new Date(Date.now() + 60_000),
+      aloneTimeoutMs: 1_000,
+      log: () => {},
+    });
+    expect(result.participants).toEqual(["Sharif Islam", "Guest Two"]);
+    expect(result.speakerTimeline.map((t) => t.name)).toEqual(["Sharif Islam", "Guest Two"]);
+  }, 60_000);
+
   it("skips the consent message when chat is restricted", async () => {
     const { recordMeet } = await import("./join");
     const logs: string[] = [];
@@ -179,4 +193,16 @@ describe.skipIf(!chrome || !existsSync(chrome))("recordMeet (fake Meet page)", (
       }),
     ).rejects.toSatisfy((err) => err instanceof JoinFailed && err.reason === "denied");
   }, 60_000);
+});
+
+describe("isBotName", () => {
+  it("matches the bot however Meet labels it", async () => {
+    const { isBotName } = await import("./names");
+    const bot = ["Notetaker for Sharif", "Minute Flow"];
+    expect(isBotName("Minute Flow", bot)).toBe(true);
+    expect(isBotName("MinuteFlow (You)", bot)).toBe(true);
+    expect(isBotName("minute  flow", bot)).toBe(true);
+    expect(isBotName("Notetaker for Sharif", bot)).toBe(true);
+    expect(isBotName("Mohammed Shariful Islam", bot)).toBe(false);
+  });
 });

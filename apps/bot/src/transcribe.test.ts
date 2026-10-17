@@ -135,3 +135,13 @@ describe("nameSpeakers", () => {
     expect(nameSpeakers([seg("Speaker 1", 0, 1_000)], [])[0]!.speaker).toBe("Speaker 1");
   });
 });
+
+describe("nameOnlySpeaker", () => {
+  const seg = (speaker: string) => ({ speaker, startMs: 0, endMs: 1, text: "x" });
+  it("names the one voice after the one person Meet listed", async () => {
+    const { nameOnlySpeaker } = await import("./transcribe");
+    expect(nameOnlySpeaker([seg("Speaker 1"), seg("Speaker 1")], ["Sharif"]).map((s) => s.speaker)).toEqual(["Sharif", "Sharif"]);
+    expect(nameOnlySpeaker([seg("Speaker 1"), seg("Speaker 2")], ["Sharif"])[1]!.speaker).toBe("Speaker 2");
+    expect(nameOnlySpeaker([seg("Speaker 1")], ["Sharif", "Rayyan"])[0]!.speaker).toBe("Speaker 1");
+  });
+});

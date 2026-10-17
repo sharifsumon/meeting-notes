@@ -1,6 +1,7 @@
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { config, headless } from "../config";
 import { installAudioCapture, installCaptionWatcher } from "./capture";
+import { isBotName } from "./names";
 
 export class JoinFailed extends Error {
   constructor(
@@ -158,9 +159,17 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
       .evaluate(() => (window as unknown as { __mfStop: () => Promise<void> }).__mfStop())
       .catch((err) => log(`Stopping recorder failed: ${err}`));
     await page.getByRole("button", { name: /leave call/i }).click({ timeout: 5_000 }).catch(() => {});
-    const bot = ownerPattern(opts.botName);
-    const participants = [...seen].filter((n) => !bot.test(n) && n !== opts.botName);
-    return { joinedAt, leftAt: new Date(), reason, title, participants, speakerTimeline };
+    // Signed in, Meet shows the bot under its Google account's name rather than the name it asked to join with.
+    const botNames = [opts.botName, config.BOT_ACCOUNT_NAME];
+    const participants = [...seen].filter((n) => !isBotName(n, botNames));
+    return {
+      joinedAt,
+      leftAt: new Date(),
+      reason,
+      title,
+      participants,
+      speakerTimeline: speakerTimeline.filter((t) => !isBotName(t.name, botNames)),
+    };
   } finally {
     open.delete(context);
     await context.close().catch(() => {});
@@ -201,11 +210,6 @@ function escapeRegExp(s: string) {
 /** Matches any of the owners' names, but not the bot's own "Notetaker for <name>". */
 export function ownersPattern(names: string[]) {
   return new RegExp(`(?<!for )\\b(${names.map((n) => escapeRegExp(n.trim())).join("|")})\\b`, "i");
-}
-
-/** Matches the owner's name, but not the bot's own "Notetaker for <name>". */
-export function ownerPattern(name: string) {
-  return new RegExp(`(?<!for )\\b${escapeRegExp(name.trim())}\\b`, "i");
 }
 
 async function joinFromLobby(
@@ -319,22 +323,18 @@ async function participants(page: Page): Promise<string[] | null> {
 
 /** Turns on Meet's captions so the bot can see who is speaking. */
 async function enableCaptions(page: Page, log: (m: string) => void) {
-  const turnOff = page
-    .getByRole("button", { name: /turn off captions/i })
-    .or(page.getByRole("button", { name: /captions/i, pressed: true }))
-    .or(page.getByRole("region", { name: /captions/i }))
-    .first();
-  const isOn = () => turnOff.isVisible().catch(() => false);
   // The watcher polls for the captions area itself, so it's safe to start before captions show up.
   await page.evaluate(installCaptionWatcher);
 
+  // Each way of turning captions on is a toggle, so only try the next one once captions are
+  // clearly still off. Meet can take several seconds to turn them on.
   const attempts: Array<[string, () => Promise<unknown>]> = [
     ["button", () => page.getByRole("button", { name: /turn on captions/i }).first().click({ timeout: 3_000 })],
     [
       "menu",
       async () => {
         await page.getByRole("button", { name: /more options/i }).first().click({ timeout: 3_000 });
-        await page.getByRole("menuitem", { name: /captions/i }).first().click({ timeout: 3_000 });
+        await page.getByRole("menuitem", { name: /turn on captions/i }).first().click({ timeout: 3_000 });
       },
     ],
     [
@@ -348,15 +348,15 @@ async function enableCaptions(page: Page, log: (m: string) => void) {
     ],
   ];
   for (const [how, attempt] of attempts) {
-    if (await isOn()) break;
+    const state = await captionsState(page);
+    if (state === "on") return log("Captions on; noting who speaks");
     await attempt().catch(() => {});
     await page.keyboard.press("Escape").catch(() => {});
-    if (await turnOff.waitFor({ timeout: 3_000 }).then(() => true).catch(() => false)) {
-      log(`Captions on (${how}); noting who speaks`);
-      return;
-    }
+    const after = await waitForCaptions(page, 10_000);
+    if (after === "on") return log(`Captions on (${how}); noting who speaks`);
+    if (after === "unknown") break; // can't tell; another toggle might turn them off again
   }
-  if (await isOn()) return log("Captions on; noting who speaks");
+  if ((await captionsState(page)) === "on") return log("Captions on; noting who speaks");
 
   // Leave a trail for fixing this: what the bot could press.
   const buttons = await page
@@ -369,7 +369,33 @@ async function enableCaptions(page: Page, log: (m: string) => void) {
         .slice(0, 40),
     )
     .catch(() => []);
-  log(`Captions didn't turn on; speakers will be numbered. Buttons: ${buttons.join(" | ")}`);
+  log(`Captions didn't turn on yet; will retry during the call. Buttons: ${buttons.join(" | ")}`);
+}
+
+/**
+ * Whether Meet's captions are on, judged by the captions button's label (it flips between
+ * "Turn on captions" and "Turn off captions") and by the captions area.
+ */
+export async function captionsState(page: Page): Promise<"on" | "off" | "unknown"> {
+  const visible = (l: ReturnType<Page["getByRole"]>) => l.first().isVisible().catch(() => false);
+  if (
+    (await visible(page.getByRole("button", { name: /turn off captions/i }))) ||
+    (await visible(page.getByRole("button", { name: /captions/i, pressed: true }))) ||
+    (await visible(page.getByRole("region", { name: /captions/i })))
+  ) {
+    return "on";
+  }
+  return (await visible(page.getByRole("button", { name: /turn on captions/i }))) ? "off" : "unknown";
+}
+
+async function waitForCaptions(page: Page, timeoutMs: number) {
+  const until = Date.now() + timeoutMs;
+  let state = await captionsState(page);
+  while (state !== "on" && Date.now() < until) {
+    await sleep(500);
+    state = await captionsState(page);
+  }
+  return state;
 }
 
 const MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i;
@@ -398,6 +424,8 @@ type EndOptions = {
   log: (m: string) => void;
 };
 
+const CAPTION_RETRY_MS = 60_000;
+
 async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGoneMs, seen, log }: EndOptions) {
   const inCall = page.getByRole("button", { name: /leave call/i });
   const aloneBanner = page.getByText(/you're the only one here|everyone else has left/i);
@@ -405,6 +433,7 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
   let aloneSince: number | null = null;
   let ownerSeen = false;
   let ownerGoneSince: number | null = null;
+  let nextCaptionTry = Date.now() + CAPTION_RETRY_MS;
 
   for (;;) {
     if (Date.now() >= leaveBy.getTime()) return "scheduled end passed";
@@ -414,6 +443,13 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
 
     const people = await participants(page);
     people?.forEach((p) => seen.add(p.trim()));
+
+    // Captions sometimes don't take right after joining; keep trying while the call runs.
+    if (Date.now() >= nextCaptionTry && (await captionsState(page)) === "off") {
+      nextCaptionTry = Date.now() + CAPTION_RETRY_MS;
+      await page.getByRole("button", { name: /turn on captions/i }).first().click({ timeout: 3_000 }).catch(() => {});
+      log(`Retried captions: ${await waitForCaptions(page, 10_000)}`);
+    }
 
     if (owner && people) {
       if (people.some((p) => owner.test(p))) {

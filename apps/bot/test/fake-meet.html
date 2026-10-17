@@ -36,7 +36,7 @@
     if (params.get("hideLobbyPeople")) document.getElementById("incall").hidden = true;
     const render = () => {
       document.getElementById("incall").textContent = others.length ? others.join(", ") + " is in this call" : "No one else is here";
-      document.getElementById("plist").replaceChildren(...["Notetaker for Sharif", ...others].map((n) => {
+      document.getElementById("plist").replaceChildren(...[params.get("botListedAs") ?? "Notetaker for Sharif", ...others].map((n) => {
         const li = document.createElement("li"); li.setAttribute("aria-label", n); li.textContent = n; return li;
       }));
     };
@@ -91,10 +91,24 @@
       document.getElementById("captions").append(block);
       words.forEach((w, i) => setTimeout(() => { block.querySelector(".words").textContent += w + " "; }, i * everyMs));
     };
+    // Like Meet, the button toggles, and can take a few seconds to turn captions on.
+    let captionsOn = false;
     document.getElementById("ccbtn").onclick = () => {
+      captionsOn = !captionsOn;
+      if (!captionsOn) {
+        document.getElementById("captions").hidden = true;
+        document.getElementById("ccbtn").setAttribute("aria-label", "Turn on captions");
+        return;
+      }
+      setTimeout(showCaptions, Number(params.get("ccDelayMs") ?? 0));
+    };
+    let spoken = false;
+    const showCaptions = () => {
+      if (!captionsOn) return;
       document.getElementById("captions").hidden = false;
       document.getElementById("ccbtn").setAttribute("aria-label", "Turn off captions");
-      if (!params.get("captions")) return;
+      if (!params.get("captions") || spoken) return;
+      spoken = true;
       setTimeout(() => say("Sharif Islam", ["Hello", "everyone", "let's", "start"], 500), 500);
       setTimeout(() => say("Guest Two", ["Sounds", "good", "to", "me"], 500), 3500);
     };

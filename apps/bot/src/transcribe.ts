@@ -4,6 +4,7 @@ import { botSessions, transcripts, type SpeakerTurn, type TranscriptSegment } fr
 import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
+import { isBotName } from "./meet/names";
 
 /** Turns a recording into speaker-labelled segments. Swap the implementation to change services. */
 export interface TranscriptionProvider {
@@ -189,6 +190,16 @@ export function nameSpeakers(segments: TranscriptSegment[], timeline: SpeakerTur
   return segments.map((seg) => ({ ...seg, speaker: names.get(seg.speaker) ?? seg.speaker }));
 }
 
+/**
+ * Without captions, a call where Meet listed one other person and the transcript heard one
+ * voice can still be named.
+ */
+export function nameOnlySpeaker(segments: TranscriptSegment[], participants: string[]): TranscriptSegment[] {
+  const labels = new Set(segments.map((s) => s.speaker));
+  if (participants.length !== 1 || labels.size !== 1 || !/^Speaker \d+$/.test([...labels][0]!)) return segments;
+  return segments.map((s) => ({ ...s, speaker: participants[0]! }));
+}
+
 /** The configured provider, or null when no transcription key is set. */
 export function transcriptionProvider(): TranscriptionProvider | null {
   if (!config.DEEPGRAM_API_KEY) return null;
@@ -216,7 +227,12 @@ export async function transcribePending(provider: TranscriptionProvider) {
   }
 
   const pending = await db
-    .select({ id: botSessions.id, key: botSessions.recordingKey, timeline: botSessions.speakerTimeline })
+    .select({
+      id: botSessions.id,
+      key: botSessions.recordingKey,
+      timeline: botSessions.speakerTimeline,
+      participants: botSessions.participants,
+    })
     .from(botSessions)
     .leftJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .where(
@@ -236,7 +252,8 @@ export async function transcribePending(provider: TranscriptionProvider) {
       log(`Sending ${audio.length} bytes to ${provider.name}`);
       const result = await provider.transcribe(audio, "audio/webm");
       const { language } = result;
-      const segments = nameSpeakers(result.segments, s.timeline);
+      const people = s.participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME]));
+      const segments = nameOnlySpeaker(nameSpeakers(result.segments, s.timeline), people);
       await db.insert(transcripts).values({ botSessionId: s.id, language, segments }).onConflictDoNothing();
       // With AI notes on, the summary step marks the session done; empty transcripts have nothing to summarize.
       if (!config.GROQ_API_KEY || segments.length === 0) {
