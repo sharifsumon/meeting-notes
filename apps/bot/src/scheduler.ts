@@ -82,10 +82,31 @@ export async function scheduleDueMeetings(now = new Date()) {
       .onConflictDoNothing({ target: botSessions.meetingId })
       .returning({ id: botSessions.id });
     if (!session) continue; // another scheduler got there first
-    await joinQueue.add("join", { botSessionId: session.id }, { jobId: session.id, attempts: 1 });
+    await joinQueue.add("join", { botSessionId: session.id, meetingId: m.id }, { jobId: session.id, attempts: 1 });
     console.log(`Scheduled bot ${session.id} for meeting ${m.id}`);
   }
   return due.length;
+}
+
+/**
+ * Drops queued joins whose bot session is gone because the user deleted the meeting. (The worker
+ * would skip them anyway; this keeps them from holding a place in the queue.)
+ */
+export async function removeDeletedJobs() {
+  const jobs = await joinQueue.getJobs(["waiting", "delayed", "prioritized", "paused"]);
+  if (!jobs.length) return;
+  const ids = jobs.map((j) => j.data.botSessionId);
+  const live = new Set(
+    (await db.select({ id: botSessions.id }).from(botSessions).where(inArray(botSessions.id, ids))).map((r) => r.id),
+  );
+  const byMeeting = new Map<string, number>();
+  for (const job of jobs) {
+    if (live.has(job.data.botSessionId)) continue;
+    await job.remove().catch((err) => console.error(`Couldn't remove queued job ${job.id}:`, err));
+    const meeting = job.data.meetingId ?? `unknown (bot ${job.data.botSessionId})`;
+    byMeeting.set(meeting, (byMeeting.get(meeting) ?? 0) + 1);
+  }
+  for (const [meeting, n] of byMeeting) console.log(`Removed ${n} queued jobs for meeting ${meeting}`);
 }
 
 export async function botNameFor(meetingId: string) {

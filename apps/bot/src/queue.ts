@@ -4,7 +4,7 @@ import { config } from "./config";
 
 export const JOIN_QUEUE = "bot-join";
 
-export type JoinJob = { botSessionId: string };
+export type JoinJob = { botSessionId: string; meetingId?: string };
 
 export function redisConnection() {
   // BullMQ workers need maxRetriesPerRequest: null.

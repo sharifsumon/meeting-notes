@@ -10,6 +10,8 @@ Group=meetingnotes
 WorkingDirectory=/opt/meetingnotes/app/apps/web
 # Read by systemd as root, so the file can stay root-only (chmod 600).
 EnvironmentFile=/root/meeting-notes.env
+# Which build folder to serve; deploy.sh switches it after each successful build.
+EnvironmentFile=-/var/lib/meetingnotes/web-dist.env
 Environment=NODE_ENV=production
 ExecStart=/opt/meetingnotes/app/apps/web/node_modules/.bin/next start -H 127.0.0.1 -p 3000
 Restart=on-failure
@@ -19,7 +21,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/meetingnotes -/opt/meetingnotes/app/apps/web/.next/cache
+ReadWritePaths=/var/lib/meetingnotes -/opt/meetingnotes/app/apps/web/.next/cache -/opt/meetingnotes/app/apps/web/.next-a/cache -/opt/meetingnotes/app/apps/web/.next-b/cache
 
 [Install]
 WantedBy=multi-user.target

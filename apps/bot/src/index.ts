@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { config } from "./config";
 import { JOIN_QUEUE, redisConnection, type JoinJob } from "./queue";
-import { scheduleDueMeetings } from "./scheduler";
+import { removeDeletedJobs, scheduleDueMeetings } from "./scheduler";
 import { summarizePending, summarizer } from "./summarize";
 import { transcribePending, transcriptionProvider } from "./transcribe";
 import { closeAllBrowsers } from "./meet/join";
@@ -22,6 +22,7 @@ let timer: NodeJS.Timeout | undefined;
 async function tick() {
   try {
     await scheduleDueMeetings();
+    await removeDeletedJobs();
   } catch (err) {
     console.error("Scheduler failed:", err);
   }
