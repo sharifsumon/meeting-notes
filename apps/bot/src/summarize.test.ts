@@ -47,7 +47,14 @@ describe("summaries", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const notes = await groq("key", "openai/gpt-oss-120b").summarize({ title: "Sync", segments: [seg(0, "Speaker 1", "Hi")] });
-    expect(notes).toEqual({ summary: "Done.", keyPoints: [], decisions: ["A"], actionItems: [] });
+    expect(notes).toEqual({
+      summary: "Done.",
+      keyPoints: [],
+      decisions: ["A"],
+      actionItems: [],
+      // No participant list or model attendees: the speaker labels stand in.
+      minutes: { attendees: ["Speaker 1"], topics: [] },
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const body = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
     expect(body.model).toBe("openai/gpt-oss-120b");
@@ -71,6 +78,40 @@ describe("summaries", () => {
     const system = (call: number) => JSON.parse(fetchMock.mock.calls[call]![1].body as string).messages[0].content as string;
     expect(system(0)).toContain("Write the notes in English");
     expect(system(1)).toContain("translate meeting notes into Bangla");
+  });
+});
+
+describe("minutes", () => {
+  it("parses numbered topics with bullets nested at most three levels", async () => {
+    const { parseNotes } = await import("./summarize");
+    const deep = { text: "L1", children: [{ text: "L2", children: [{ text: "L3", children: [{ text: "L4" }] }] }] };
+    const notes = parseNotes(
+      JSON.stringify({
+        summary: "",
+        minutes: {
+          attendees: ["Sharif", ""],
+          topics: [{ title: " Scope Review ", points: [deep, "Rayyan agreed to follow up.", { nope: 1 }] }, { points: [] }],
+        },
+      }),
+    );
+    expect(notes.minutes).toEqual({
+      attendees: ["Sharif"],
+      topics: [
+        {
+          title: "Scope Review",
+          points: [{ text: "L1", children: [{ text: "L2", children: [{ text: "L3" }] }] }, { text: "Rayyan agreed to follow up." }],
+        },
+      ],
+    });
+  });
+
+  it("takes attendees from Meet's participant list first", async () => {
+    const { withAttendees } = await import("./summarize");
+    const base = { summary: "", keyPoints: [], decisions: [], actionItems: [], minutes: { attendees: ["Model guess"], topics: [] } };
+    const segs = [seg(0, "Speaker 2", "x")];
+    expect(withAttendees(base, ["Sharif Islam", "Rayyan"], segs).minutes!.attendees).toEqual(["Sharif Islam", "Rayyan"]);
+    expect(withAttendees(base, [], segs).minutes!.attendees).toEqual(["Model guess"]);
+    expect(withAttendees({ ...base, minutes: undefined }, [], segs).minutes!.attendees).toEqual(["Speaker 2"]);
   });
 });
 

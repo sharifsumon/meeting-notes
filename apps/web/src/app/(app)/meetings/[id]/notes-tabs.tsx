@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ActionItem, NoteContent, TranscriptSegment } from "@minuteflow/db";
+import type { ActionItem, Minutes, MinutesPoint, NoteContent, TranscriptSegment } from "@minuteflow/db";
 import { Icon } from "@/components/ui";
 import { seekAudio } from "./audio-player";
 
@@ -10,6 +10,8 @@ type Props = {
   decisions: string[];
   keyPoints: string[];
   actionItems: ActionItem[];
+  /** Missing on notes written before minutes existed. */
+  minutes?: Minutes;
   /** The notes in other languages; Bangla calls have "bn". */
   translations: Record<string, NoteContent>;
   segments: TranscriptSegment[];
@@ -38,12 +40,12 @@ export function NotesTabs({ translations, segments, recorded, transcribed, ...en
   const [query, setQuery] = useState("");
   const [lang, setLang] = useState<"en" | "bn">("en");
   const bangla = translations.bn;
-  const { summary, decisions, keyPoints, actionItems } = lang === "bn" && bangla ? bangla : english;
+  const { summary, decisions, keyPoints, actionItems, minutes } = lang === "bn" && bangla ? bangla : english;
 
   const tabs = [
     { id: "summary", label: "Summary" },
     { id: "transcript", label: "Transcript" },
-    { id: "actions", label: actionItems.length ? `Action items (${actionItems.length})` : "Action items" },
+    { id: "actions", label: "Meeting Minutes" },
   ] as const;
 
   const silent = transcribed && segments.length === 0;
@@ -205,24 +207,112 @@ export function NotesTabs({ translations, segments, recorded, transcribed, ...en
       )}
 
       {tab === "actions" && (
-        <section className="card flex flex-col gap-1.5 p-6">
-          <h2 className="mb-2.5 text-lg font-bold">Action items</h2>
-          {actionItems.length === 0 ? (
-            <p className="text-[15px] leading-relaxed text-muted">
-              {recorded && !silent ? "Action items will appear once AI notes are switched on." : empty}
-            </p>
+        <section className="card flex flex-col gap-4 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">Meeting Minutes</h2>
+            {minutes && minutes.topics.length > 0 && <CopyButton text={minutesText(minutes, actionItems)} />}
+          </div>
+          {minutes && minutes.topics.length > 0 ? (
+            <>
+              {minutes.attendees.length > 0 && (
+                <p className="text-[15px] text-ink-2">
+                  <span className="font-bold text-ink">Attendees:</span> {minutes.attendees.join(", ")}
+                </p>
+              )}
+              <h3 className="text-[15px] font-bold">Discussion Points</h3>
+              <ol className="flex list-decimal flex-col gap-4 pl-6 text-[15px] leading-relaxed text-ink-2 marker:font-bold">
+                {minutes.topics.map((t, i) => (
+                  <li key={i}>
+                    <span className="font-bold text-ink">{t.title}</span>
+                    <Points points={t.points} depth={0} />
+                  </li>
+                ))}
+              </ol>
+              {actionItems.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <h3 className="text-[15px] font-bold">Next steps</h3>
+                  <ActionList items={actionItems} />
+                </div>
+              )}
+            </>
+          ) : actionItems.length > 0 ? (
+            // Notes written before minutes existed only have action items.
+            <ActionList items={actionItems} />
           ) : (
-            actionItems.map((x, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-3 border-t border-line-soft py-3">
-                <span aria-hidden="true" className="size-2 flex-none rounded-full bg-green-600" />
-                <p className="flex-[1_1_300px] text-[15px]">{x.text}</p>
-                {x.owner && <span className="text-[13px] text-ink-3">{x.owner}</span>}
-                {x.dueDate && <span className="pill bg-orange-100 text-orange-800">{x.dueDate}</span>}
-              </div>
-            ))
+            <p className="text-[15px] leading-relaxed text-muted">
+              {recorded && !silent ? "Minutes will appear once AI notes are switched on." : empty}
+            </p>
           )}
         </section>
       )}
     </>
+  );
+}
+
+const BULLET = ["list-disc", "list-[circle]", "list-[square]"];
+
+function Points({ points, depth }: { points: MinutesPoint[]; depth: number }) {
+  if (!points.length) return null;
+  return (
+    <ul className={`mt-1.5 flex flex-col gap-1.5 pl-5 ${BULLET[depth] ?? "list-disc"}`}>
+      {points.map((p, i) => (
+        <li key={i}>
+          {p.text}
+          {p.children && <Points points={p.children} depth={depth + 1} />}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ActionList({ items }: { items: ActionItem[] }) {
+  return items.map((x, i) => (
+    <div key={i} className="flex flex-wrap items-center gap-3 border-t border-line-soft py-3">
+      <span aria-hidden="true" className="size-2 flex-none rounded-full bg-green-600" />
+      <p className="flex-[1_1_300px] text-[15px]">{x.text}</p>
+      {x.owner && <span className="text-[13px] text-ink-3">{x.owner}</span>}
+      {x.dueDate && <span className="pill bg-orange-100 text-orange-800">{x.dueDate}</span>}
+    </div>
+  ));
+}
+
+/** The minutes as plain text, ready to paste into an email or document. */
+export function minutesText(minutes: Minutes, actionItems: ActionItem[] = []) {
+  const lines = [`Attendees: ${minutes.attendees.join(", ")}`, "", "Discussion Points"];
+  const add = (points: MinutesPoint[], depth: number) => {
+    for (const p of points) {
+      lines.push(`${"   ".repeat(depth)}* ${p.text}`);
+      if (p.children) add(p.children, depth + 1);
+    }
+  };
+  minutes.topics.forEach((t, i) => {
+    lines.push(`${i + 1}. ${t.title}`);
+    add(t.points, 0);
+  });
+  if (actionItems.length) {
+    lines.push("", "Next steps");
+    for (const a of actionItems) lines.push(`* ${[a.text, a.owner, a.dueDate].filter(Boolean).join(" · ")}`);
+  }
+  return lines.join("\n");
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn-outline"
+      onClick={() =>
+        navigator.clipboard.writeText(text).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          },
+          () => setCopied(false),
+        )
+      }
+    >
+      {copied ? "Copied" : "Copy minutes"}
+    </button>
   );
 }

@@ -123,6 +123,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             decisions={note?.decisions ?? []}
             keyPoints={note?.keyPoints ?? []}
             actionItems={note?.actionItems ?? []}
+            minutes={note?.minutes ?? undefined}
             translations={note?.translations ?? {}}
             segments={transcript?.segments ?? []}
             recorded={hasRecording}

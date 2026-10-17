@@ -1,4 +1,14 @@
-import { botSessions, meetings, notes, transcripts, type ActionItem, type NoteContent, type TranscriptSegment } from "@minuteflow/db";
+import {
+  botSessions,
+  meetings,
+  notes,
+  transcripts,
+  type ActionItem,
+  type Minutes,
+  type MinutesPoint,
+  type NoteContent,
+  type TranscriptSegment,
+} from "@minuteflow/db";
 import { and, eq, inArray, isNull, like, not, or, sql } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
@@ -41,11 +51,40 @@ export function transcriptChunks(segments: TranscriptSegment[], maxChars: number
 
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : []);
 
+const MAX_DEPTH = 3;
+
+function points(v: unknown, depth = 1): MinutesPoint[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((p): MinutesPoint[] => {
+    // Models sometimes answer with plain strings for leaf bullets.
+    if (typeof p === "string") return p.trim() ? [{ text: p.trim() }] : [];
+    if (!p || typeof p !== "object" || typeof (p as { text?: unknown }).text !== "string") return [];
+    const { text, children } = p as { text: string; children?: unknown };
+    const kids = depth < MAX_DEPTH ? points(children, depth + 1) : [];
+    return text.trim() ? [{ text: text.trim(), ...(kids.length ? { children: kids } : {}) }] : [];
+  });
+}
+
+export function parseMinutes(v: unknown): Minutes | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const { attendees, topics } = v as { attendees?: unknown; topics?: unknown };
+  return {
+    attendees: strings(attendees),
+    topics: (Array.isArray(topics) ? topics : []).flatMap((t) => {
+      if (!t || typeof t !== "object" || typeof (t as { title?: unknown }).title !== "string") return [];
+      const { title, points: p } = t as { title: string; points?: unknown };
+      return title.trim() ? [{ title: title.trim(), points: points(p) }] : [];
+    }),
+  };
+}
+
 /** Validates the model's JSON loosely: anything missing becomes empty rather than failing the meeting. */
 export function parseNotes(raw: string): MeetingNotes {
   const v = JSON.parse(raw) as Record<string, unknown>;
   const items = Array.isArray(v.actionItems) ? v.actionItems : [];
+  const minutes = parseMinutes(v.minutes);
   return {
+    ...(minutes ? { minutes } : {}),
     summary: typeof v.summary === "string" ? v.summary.trim() : "",
     keyPoints: strings(v.keyPoints),
     decisions: strings(v.decisions),
@@ -64,8 +103,24 @@ export function parseNotes(raw: string): MeetingNotes {
 }
 
 const NOTES_SHAPE = `Reply with JSON only, in this shape:
-{"summary": "one paragraph, 3-6 sentences", "keyPoints": ["short topic", ...], "decisions": ["decision", ...], "actionItems": [{"text": "what needs doing", "owner": "who, if said", "due": "when, if said"}]}
-Only include decisions and action items that were actually stated. Use [] when there are none. Speakers are labelled "Speaker 1", "Speaker 2"; use real names only where the transcript says them.`;
+{"summary": "one paragraph, 3-6 sentences", "keyPoints": ["short topic", ...], "decisions": ["decision", ...], "actionItems": [{"text": "what needs doing", "owner": "who, if said", "due": "when, if said"}],
+ "minutes": {"attendees": ["name", ...], "topics": [{"title": "Topic title", "points": [{"text": "bullet", "children": [{"text": "sub-bullet", "children": [{"text": "sub-sub-bullet"}]}]}]}]}}
+Only include decisions and action items that were actually stated. Use [] when there are none. Speakers are labelled "Speaker 1", "Speaker 2"; use real names only where the transcript says them.
+"minutes" are formal meeting minutes. Group the discussion into numbered topics in the order they came up, each with a short descriptive title (for example "Scope Review", "Delivery Planning", "Weekly Project Meeting"). Write every bullet in the third person, past tense and a formal tone, naming who said, raised, clarified, confirmed or agreed to what (for example "Sharif confirmed that the team will prioritize the booking flow." or "Rayyan agreed to look for the old credentials and share them if found."). Cover agreements and who will follow up, and any timelines, dates and recurring meetings. Use "children" for supporting detail, at most three levels deep. "attendees" lists everyone who took part.`;
+
+/**
+ * Attendees come from Meet's participant list when the bot saw it; otherwise the model's
+ * list, or the transcript's speaker labels.
+ */
+export function withAttendees(notes: MeetingNotes, participants: string[], segments: TranscriptSegment[]): MeetingNotes {
+  const minutes = notes.minutes ?? { attendees: [], topics: [] };
+  const attendees = participants.length
+    ? participants
+    : minutes.attendees.length
+      ? minutes.attendees
+      : [...new Set(segments.map((s) => s.speaker))];
+  return { ...notes, minutes: { ...minutes, attendees } };
+}
 
 /** OpenAI-compatible chat completions with JSON output, retrying rate limits. */
 export function groq(apiKey: string, model: string): Summarizer {
@@ -109,7 +164,7 @@ export function groq(apiKey: string, model: string): Summarizer {
       // Small chunks keep each request inside Groq's free-tier tokens-per-minute limit.
       const chunks = transcriptChunks(segments, 20_000);
       if (chunks.length === 1) {
-        return parseNotes(await complete(system, `${header}\n\nTranscript:\n${chunks[0]}`));
+        return withAttendees(parseNotes(await complete(system, `${header}\n\nTranscript:\n${chunks[0]}`)), participants, segments);
       }
       const parts: MeetingNotes[] = [];
       for (const [i, chunk] of chunks.entries()) {
@@ -119,15 +174,19 @@ export function groq(apiKey: string, model: string): Summarizer {
           ),
         );
       }
-      return parseNotes(
-        await complete(
-          `You merge partial meeting notes into one set of notes, removing duplicates. ${NOTES_SHAPE}\n${writeIn}`,
-          `Meeting: ${title}\nNotes for each part, in order:\n${JSON.stringify(parts)}`,
+      return withAttendees(
+        parseNotes(
+          await complete(
+            `You merge partial meeting notes into one set of notes, removing duplicates and joining topics that continue across parts. ${NOTES_SHAPE}\n${writeIn}`,
+            `Meeting: ${title}\nNotes for each part, in order:\n${JSON.stringify(parts)}`,
+          ),
         ),
+        participants,
+        segments,
       );
     },
     async translate(notes, language) {
-      const { summary, keyPoints, decisions, actionItems } = notes;
+      const { summary, keyPoints, decisions, actionItems, minutes } = notes;
       return parseNotes(
         await complete(
           `You translate meeting notes into ${language}. Keep people's names, product names and technical terms as they are. ${NOTES_SHAPE}`,
@@ -136,6 +195,7 @@ export function groq(apiKey: string, model: string): Summarizer {
             keyPoints,
             decisions,
             actionItems: actionItems.map(({ text, owner, dueDate }) => ({ text, owner, due: dueDate })),
+            minutes,
           }),
         ),
       );
@@ -189,10 +249,12 @@ export async function summarizePending(provider: Summarizer) {
       const translations: Record<string, MeetingNotes> = bilingual ? { bn: await provider.translate(result, "Bangla (বাংলা)") } : {};
       await db
         .insert(notes)
-        .values({ meetingId: s.meetingId, ...result, translations })
+        .values({ meetingId: s.meetingId, ...result, minutes: result.minutes ?? null, translations })
         .onConflictDoNothing();
       await db.update(botSessions).set({ status: "completed" }).where(eq(botSessions.id, s.sessionId));
-      log(`Saved notes (${result.decisions.length} decisions, ${result.actionItems.length} action items)`);
+      log(
+        `Saved notes (${result.minutes?.topics.length ?? 0} topics, ${result.decisions.length} decisions, ${result.actionItems.length} action items)`,
+      );
       attempts.delete(s.sessionId);
     } catch (err) {
       const n = (attempts.get(s.sessionId) ?? 0) + 1;

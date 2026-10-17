@@ -206,7 +206,17 @@ export const transcripts = pgTable("transcripts", {
 });
 
 export type ActionItem = { text: string; owner?: string; dueDate?: string };
-export type NoteContent = { summary: string; keyPoints: string[]; decisions: string[]; actionItems: ActionItem[] };
+/** A minutes bullet; bullets nest up to three levels. */
+export type MinutesPoint = { text: string; children?: MinutesPoint[] };
+/** Formal meeting minutes: who attended, then numbered discussion topics. */
+export type Minutes = { attendees: string[]; topics: { title: string; points: MinutesPoint[] }[] };
+export type NoteContent = {
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: ActionItem[];
+  minutes?: Minutes;
+};
 
 export const notes = pgTable("notes", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -218,6 +228,8 @@ export const notes = pgTable("notes", {
   keyPoints: jsonb("key_points").$type<string[]>().notNull().default([]),
   decisions: jsonb("decisions").$type<string[]>().notNull().default([]),
   actionItems: jsonb("action_items").$type<ActionItem[]>().notNull().default([]),
+  // Null for notes written before minutes existed.
+  minutes: jsonb("minutes").$type<Minutes>(),
   // The same notes in other languages, by language code (Bangla calls get "bn" next to English).
   translations: jsonb("translations").$type<Record<string, NoteContent>>().notNull().default({}),
   createdAt: createdAt(),
