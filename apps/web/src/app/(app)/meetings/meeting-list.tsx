@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { Icon, PlatformChip, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui";
 import type { MeetingRow } from "@/lib/meetings";
 import { RecordSwitch } from "./record-switch";
+import { SendBotNowButton } from "./send-bot-now";
 
 const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" });
 const longDayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -101,6 +102,7 @@ function MeetingCard({ meeting: m }: { meeting: MeetingRow }) {
         {timeFmt.format(new Date(m.startsAt))} – {timeFmt.format(new Date(m.endsAt))}
       </span>
       <div className="ml-auto flex flex-none flex-wrap items-center gap-2">
+        {canToggle && m.status === null && <SendBotNowButton meetingId={m.id} />}
         {canToggle && <RecordSwitch meetingId={m.id} enabled={m.recordEnabled} />}
         <Link href={`/meetings/${m.id}`} className="btn-dark">
           Open Details

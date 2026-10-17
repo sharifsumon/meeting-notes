@@ -79,6 +79,29 @@ export async function setAutoRecord(enabled: boolean): Promise<ActionResult> {
   return {};
 }
 
+/** "Send bot now" on a calendar meeting: the bot joins right away instead of at the start time. */
+export async function sendBotToMeeting(meetingId: string): Promise<ActionResult> {
+  const userId = await requireUserId();
+  const withBot = db().select({ id: botSessions.meetingId }).from(botSessions);
+  const updated = await db()
+    .update(meetings)
+    .set({ recordEnabled: true, botRequestedAt: new Date() })
+    .where(
+      and(
+        eq(meetings.id, meetingId),
+        eq(meetings.userId, userId),
+        eq(meetings.platform, "google_meet"),
+        eq(meetings.cancelled, false),
+        gt(meetings.endsAt, new Date()),
+        notInArray(meetings.id, withBot),
+      ),
+    )
+    .returning({ id: meetings.id });
+  revalidatePath("/meetings");
+  revalidatePath(`/meetings/${meetingId}`);
+  return updated.length ? {} : { error: "The bot is already on its way, or this meeting has ended." };
+}
+
 const CONSENT_VERSION = "2026-10-15";
 
 /** The onboarding agreement: read the calendar and record Meet calls automatically. */

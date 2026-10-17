@@ -1,5 +1,5 @@
 import { botSessions, meetings, users } from "@minuteflow/db";
-import { and, eq, gt, inArray, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 import { meetCode } from "./meet/links";
@@ -13,7 +13,8 @@ const RECORDED: string[] = ["processing", "completed"];
 const DUPLICATE_ERROR = "Another bot is recording this call";
 
 /**
- * Finds meetings marked for recording that are about to start and have no bot yet,
+ * Finds meetings marked for recording that are about to start (or that the user asked
+ * to send the bot to now) and have no bot yet,
  * creates a bot session for each and queues the join. Safe to run repeatedly.
  */
 export async function scheduleDueMeetings(now = new Date()) {
@@ -40,7 +41,7 @@ export async function scheduleDueMeetings(now = new Date()) {
         eq(meetings.recordEnabled, true),
         eq(meetings.cancelled, false),
         eq(meetings.platform, "google_meet"),
-        lte(meetings.startsAt, joinBy),
+        or(lte(meetings.startsAt, joinBy), isNotNull(meetings.botRequestedAt)),
         gt(meetings.endsAt, now),
         isNull(botSessions.id),
       ),

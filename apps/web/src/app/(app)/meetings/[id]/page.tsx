@@ -7,6 +7,7 @@ import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui
 import { db } from "@/lib/db";
 import { requireUserId } from "@/lib/session";
 import { RecordSwitch } from "../record-switch";
+import { JoinMeetingLink, SendBotNowButton } from "../send-bot-now";
 import { AudioPlayer } from "./audio-player";
 import { NotesTabs } from "./notes-tabs";
 
@@ -96,11 +97,9 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             {supported && !ended && (!bot || bot.status === "scheduled") && (
               <RecordSwitch meetingId={m.id} enabled={m.recordEnabled} label="Send notetaker" />
             )}
+            {supported && !ended && !bot && <SendBotNowButton meetingId={m.id} />}
             {m.meetingUrl && !ended && (
-              <a href={m.meetingUrl} target="_blank" rel="noreferrer" className="btn-cta">
-                <Icon name="video" size={18} strokeWidth={2.2} />
-                Join meeting
-              </a>
+              <JoinMeetingLink meetingId={m.id} url={m.meetingUrl} sendBot={supported && !bot && m.recordEnabled} />
             )}
             {hasRecording && bot && (
               <a href={`/api/recordings/${bot.id}?download=1`} className="btn-outline">

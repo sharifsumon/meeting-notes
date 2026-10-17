@@ -135,6 +135,8 @@ export const meetings = pgTable(
     cancelled: boolean("cancelled").notNull().default(false),
     // Whether the note-taker bot should join this meeting.
     recordEnabled: boolean("record_enabled").notNull().default(true),
+    // Set by "Send bot now": the bot joins right away instead of at the start time.
+    botRequestedAt: timestamp("bot_requested_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

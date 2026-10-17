@@ -1,0 +1,1 @@
+ALTER TABLE "meetings" ADD COLUMN "bot_requested_at" timestamp with time zone;
