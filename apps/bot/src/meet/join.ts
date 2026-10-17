@@ -154,6 +154,12 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
       .evaluate(() => (window as unknown as { __mfSpeakers?: () => SpeakerTurn[] }).__mfSpeakers?.() ?? [])
       .catch(() => []);
     log(`Captions named ${new Set(speakerTimeline.map((t) => t.name)).size} speakers in ${speakerTimeline.length} turns`);
+    if (!speakerTimeline.length) {
+      const stats = await page
+        .evaluate(() => (window as unknown as { __mfCaptionStats?: () => unknown }).__mfCaptionStats?.())
+        .catch(() => null);
+      log(`Caption area: ${JSON.stringify(stats)}`);
+    }
 
     await page
       .evaluate(() => (window as unknown as { __mfStop: () => Promise<void> }).__mfStop())

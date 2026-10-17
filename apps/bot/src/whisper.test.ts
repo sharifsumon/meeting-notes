@@ -14,6 +14,22 @@ describe("whisper", () => {
     ).toEqual([{ startMs: 300_000, endMs: 302_500, text: "আমরা আজকে শুরু করি" }]);
   });
 
+  it("drops what Whisper marks as silence or garbled", () => {
+    const seg = (text: string, extra = {}) => ({ start: 0, end: 1, text, ...extra });
+    expect(
+      whisperSegments(
+        [
+          seg("Thank you for watching!"),
+          seg("হ্যালো", { no_speech_prob: 0.9, avg_logprob: -1.4 }),
+          seg("ok ok ok ok", { compression_ratio: 3.1 }),
+          seg("এটি ബിഷ്ണു വിഷയം"),
+          seg("আমরা শুরু করি"),
+        ],
+        0,
+      ).map((s) => s.text),
+    ).toEqual(["আমরা শুরু করি"]);
+  });
+
   it("gives Whisper's lines the speaker Deepgram heard at that time", () => {
     const diarized = [
       { speaker: "Sharif", startMs: 0, endMs: 4_000, text: "x" },

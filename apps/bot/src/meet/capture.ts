@@ -129,7 +129,8 @@ export function installAudioCapture() {
  */
 export function installCaptionWatcher() {
   type Turn = { name: string; startMs: number; endMs: number };
-  type Win = typeof window & { __mfT0?: number; __mfSpeakers?: () => Turn[] };
+  type Stats = { regionSeen: number; blocksSeen: number; sample: string };
+  type Win = typeof window & { __mfT0?: number; __mfSpeakers?: () => Turn[]; __mfCaptionStats?: () => Stats };
   const w = window as Win;
   if (w.__mfSpeakers) return;
 
@@ -138,6 +139,8 @@ export function installCaptionWatcher() {
   const turns: Turn[] = [];
   const seen = new WeakMap<Element, { turn: Turn; text: string }>();
   const now = () => Math.max(0, performance.now() - (w.__mfT0 ?? 0));
+  // For diagnosing calls where captions were on but no speakers were noted.
+  const stats: Stats = { regionSeen: 0, blocksSeen: 0, sample: "" };
 
   const blockFor = (img: Element, region: Element) => {
     let el: Element | null = img.parentElement;
@@ -154,10 +157,13 @@ export function installCaptionWatcher() {
       document.querySelector('[role="region"][aria-label*="aption" i]') ??
       document.querySelector('[aria-label*="aption" i]:not(button):not([role="button"]):not([role="menuitem"])');
     if (!region) return;
+    stats.regionSeen++;
+    if (!stats.sample) stats.sample = (region as HTMLElement).innerText.slice(0, 120);
     const t = now();
     for (const img of Array.from(region.querySelectorAll("img"))) {
       const block = blockFor(img, region);
       if (!block) continue;
+      stats.blocksSeen++;
       const name = block.lines[0]!.trim();
       const text = block.lines.slice(1).join(" ");
       const known = seen.get(block.el);
@@ -173,4 +179,5 @@ export function installCaptionWatcher() {
   }, 500);
 
   w.__mfSpeakers = () => turns.filter((t) => t.name.toLowerCase() !== "you");
+  w.__mfCaptionStats = () => stats;
 }

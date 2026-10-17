@@ -147,7 +147,9 @@ export function deepgram(apiKey: string, extraLanguages: string[] = [], whisper?
         // Deepgram transcribes Bangla poorly and can't switch languages mid-call; Whisper writes the
         // words and Deepgram says who spoke them.
         try {
-          const lines = await whisper.transcribe(audio);
+          // Deepgram doesn't know Bangla, so it guesses a neighbour (often Hindi). Anything but English means Bangla here.
+          const pin = auto.language?.startsWith("en") ? undefined : "bn";
+          const lines = await whisper.transcribe(audio, pin);
           if (lines.length) {
             const segments = assignSpeakers(lines, auto.segments);
             const language = scriptLanguage(segments) ?? auto.language;

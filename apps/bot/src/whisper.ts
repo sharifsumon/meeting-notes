@@ -19,7 +19,7 @@ const MIXED_PROMPT = "আমরা আজকে meeting শুরু করি�
 
 /** Groq's Whisper, which handles Bangla and calls that switch between Bangla and English. */
 export function groqWhisper(apiKey: string, model = "whisper-large-v3") {
-  async function transcribeFile(audio: Buffer, filename: string, offsetMs: number): Promise<WhisperSegment[]> {
+  async function transcribeFile(audio: Buffer, filename: string, offsetMs: number, language?: string): Promise<WhisperSegment[]> {
     for (let attempt = 0; ; attempt++) {
       const form = new FormData();
       form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/webm" }), filename);
@@ -27,6 +27,8 @@ export function groqWhisper(apiKey: string, model = "whisper-large-v3") {
       form.append("response_format", "verbose_json");
       form.append("temperature", "0");
       form.append("prompt", MIXED_PROMPT);
+      // Left to guess, Whisper drifts into other Indian scripts on short Bangla clips.
+      if (language) form.append("language", language);
       const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
@@ -40,35 +42,58 @@ export function groqWhisper(apiKey: string, model = "whisper-large-v3") {
         continue;
       }
       if (!res.ok) throw new Error(`Groq Whisper returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      const body = (await res.json()) as { segments?: { start: number; end: number; text: string }[] };
+      const body = (await res.json()) as { segments?: RawSegment[] };
       return whisperSegments(body.segments ?? [], offsetMs);
     }
   }
 
   return {
     name: `Groq Whisper (${model})`,
-    async transcribe(audio: Buffer): Promise<WhisperSegment[]> {
-      if (audio.length <= MAX_BYTES) return transcribeFile(audio, "call.webm", 0);
+    /** `language` ("bn") pins the main language; English words still come out in English. */
+    async transcribe(audio: Buffer, language?: string): Promise<WhisperSegment[]> {
+      if (audio.length <= MAX_BYTES) return transcribeFile(audio, "call.webm", 0, language);
       const chunks = await splitAudio(audio, CHUNK_S);
       const segments: WhisperSegment[] = [];
       for (const [i, chunk] of chunks.entries())
-        segments.push(...(await transcribeFile(chunk, `call-${i}.webm`, i * CHUNK_S * 1000)));
+        segments.push(...(await transcribeFile(chunk, `call-${i}.webm`, i * CHUNK_S * 1000, language)));
       return segments;
     },
   };
 }
 
-// Whisper fills silence with stock phrases; drop the common ones.
-const HALLUCINATION = /^(thank you\.?|thanks for watching!?|you|\.+|subtitles by .*)$/i;
+type RawSegment = {
+  start: number;
+  end: number;
+  text: string;
+  no_speech_prob?: number;
+  avg_logprob?: number;
+  compression_ratio?: number;
+};
 
-export function whisperSegments(raw: { start: number; end: number; text: string }[], offsetMs: number): WhisperSegment[] {
+// Whisper fills silence with stock phrases; drop the common ones.
+const HALLUCINATION =
+  /^(thank you( (so|very) much)?( for watching)?[.!]*|thanks for watching[.!]*|you|\.+|subtitles by .*|please subscribe.*)$/i;
+// Letters from scripts other than Bangla and Latin mean Whisper lost track of the language.
+const OTHER_SCRIPT = /[\u0900-\u097F\u0A00-\u0D7F\u0E00-\u0FFF]/gu;
+
+/**
+ * Keeps the lines Whisper actually heard. Its own thresholds mark the rest: likely silence
+ * (no_speech_prob with a low avg_logprob), or looping text (high compression_ratio).
+ */
+export function whisperSegments(raw: RawSegment[], offsetMs: number): WhisperSegment[] {
   return raw
+    .filter((s) => !((s.no_speech_prob ?? 0) > 0.6 && (s.avg_logprob ?? 0) < -1))
+    .filter((s) => (s.compression_ratio ?? 0) <= 2.4)
     .map((s) => ({
       startMs: Math.round(s.start * 1000) + offsetMs,
       endMs: Math.round(s.end * 1000) + offsetMs,
       text: s.text.trim(),
     }))
-    .filter((s) => s.text && !HALLUCINATION.test(s.text));
+    .filter((s) => {
+      const letters = s.text.replace(/[^\p{L}]/gu, "").length;
+      const stray = s.text.match(OTHER_SCRIPT)?.length ?? 0;
+      return s.text && !HALLUCINATION.test(s.text) && stray <= letters * 0.1;
+    });
 }
 
 /** Splits a recording into pieces of `seconds` with ffmpeg, without re-encoding. */
