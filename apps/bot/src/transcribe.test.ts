@@ -74,6 +74,32 @@ describe("deepgram language fallback", () => {
   });
 });
 
+describe("deepgram with Whisper", () => {
+  it("uses Whisper's words with Deepgram's speakers when the call isn't clearly English", async () => {
+    const { deepgram } = await import("./transcribe");
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          results: {
+            channels: [{ detected_language: "en", language_confidence: 0.5, alternatives: [{ confidence: 0.6 }] }],
+            utterances: [{ start: 0, end: 3, transcript: "Check for the.", speaker: 1 }],
+          },
+        }),
+      )) as typeof fetch;
+    const whisper = { name: "Whisper", transcribe: async () => [{ startMs: 0, endMs: 2_900, text: "আমরা deploy check করব।" }] };
+    try {
+      const result = await deepgram("key", ["bn"], whisper).transcribe(Buffer.from("a"), "audio/webm");
+      expect(result).toEqual({
+        language: "bn,en",
+        segments: [{ speaker: "Speaker 2", startMs: 0, endMs: 2_900, text: "আমরা deploy check করব।" }],
+      });
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+});
+
 describe("mergeAttempts", () => {
   const line = (speaker: string, startMs: number, endMs: number, text: string) => ({ speaker, startMs, endMs, text });
   const attempt = (language: string, confidence: number, lines: [ReturnType<typeof line>, number][]) => ({

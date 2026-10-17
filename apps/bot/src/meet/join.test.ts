@@ -206,3 +206,13 @@ describe("isBotName", () => {
     expect(isBotName("Mohammed Shariful Islam", bot)).toBe(false);
   });
 });
+
+describe("dedupeNames", () => {
+  it("keeps the fuller name when one person shows up twice", async () => {
+    const { dedupeNames } = await import("./names");
+    expect(dedupeNames(["Mohammed Shariful Islam", "Shariful Islam"])).toEqual(["Mohammed Shariful Islam"]);
+    expect(dedupeNames(["Rayyan", "Rayyan Ahmed", "Sharif"])).toEqual(["Rayyan Ahmed", "Sharif"]);
+    expect(dedupeNames(["Islam", "Shariful Islam"])).toEqual(["Islam", "Shariful Islam"]);
+    expect(dedupeNames(["Guest Two", "guest  two"])).toEqual(["guest  two"]);
+  });
+});

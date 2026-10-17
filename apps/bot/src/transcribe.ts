@@ -5,6 +5,7 @@ import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm"
 import { config } from "./config";
 import { db } from "./db";
 import { isBotName } from "./meet/names";
+import { assignSpeakers, groqWhisper, scriptLanguage } from "./whisper";
 
 /** Turns a recording into speaker-labelled segments. Swap the implementation to change services. */
 export interface TranscriptionProvider {
@@ -115,7 +116,7 @@ export function mergeAttempts(attempts: Attempt[]): { language: string | null; s
   return { language: spoken.length > 1 ? spoken.join(",") : base.language, segments };
 }
 
-export function deepgram(apiKey: string, extraLanguages: string[] = []): TranscriptionProvider {
+export function deepgram(apiKey: string, extraLanguages: string[] = [], whisper?: ReturnType<typeof groqWhisper>): TranscriptionProvider {
   async function listen(audio: Buffer, mimeType: string, language?: string) {
     const url = new URL("https://api.deepgram.com/v1/listen");
     for (const [k, v] of Object.entries({
@@ -142,6 +143,21 @@ export function deepgram(apiKey: string, extraLanguages: string[] = []): Transcr
     name: "Deepgram",
     async transcribe(audio, mimeType) {
       const auto = await listen(audio, mimeType);
+      if (whisper && needsExtraLanguages(auto)) {
+        // Deepgram transcribes Bangla poorly and can't switch languages mid-call; Whisper writes the
+        // words and Deepgram says who spoke them.
+        try {
+          const lines = await whisper.transcribe(audio);
+          if (lines.length) {
+            const segments = assignSpeakers(lines, auto.segments);
+            const language = scriptLanguage(segments) ?? auto.language;
+            console.log(`[transcribe] ${whisper.name}: ${segments.length} lines, ${language ?? "unknown"} (Deepgram guessed ${auto.language ?? "?"})`);
+            return { language, segments };
+          }
+        } catch (err) {
+          console.error(`[transcribe] ${whisper.name} failed, using Deepgram only: ${err}`);
+        }
+      }
       const attempts = [auto];
       if (needsExtraLanguages(auto)) {
         // Calls in Bangla often switch to English, so English gets its own pass to merge from.
@@ -204,7 +220,9 @@ export function nameOnlySpeaker(segments: TranscriptSegment[], participants: str
 export function transcriptionProvider(): TranscriptionProvider | null {
   if (!config.DEEPGRAM_API_KEY) return null;
   const extra = config.TRANSCRIBE_EXTRA_LANGUAGES.split(",").map((l) => l.trim()).filter(Boolean);
-  return deepgram(config.DEEPGRAM_API_KEY, extra);
+  // Bangla and mixed calls go through Whisper when the Groq key is set.
+  const whisper = config.GROQ_API_KEY ? groqWhisper(config.GROQ_API_KEY, config.GROQ_WHISPER_MODEL) : undefined;
+  return deepgram(config.DEEPGRAM_API_KEY, extra, whisper);
 }
 
 const FAILED_PREFIX = "Transcription failed";

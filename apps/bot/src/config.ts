@@ -24,6 +24,8 @@ const schema = z.object({
   // Writes AI notes (summary, decisions, action items) when set.
   GROQ_API_KEY: z.string().min(1).optional(),
   GROQ_MODEL: z.string().min(1).optional(),
+  // Transcribes calls that aren't clearly English (Bangla, or Bangla mixed with English).
+  GROQ_WHISPER_MODEL: z.string().min(1).default("whisper-large-v3"),
 });
 
 export const config = schema.parse(process.env);

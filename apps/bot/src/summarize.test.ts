@@ -114,14 +114,3 @@ describe("minutes", () => {
     expect(withAttendees({ ...base, minutes: undefined }, [], segs).minutes!.attendees).toEqual(["Speaker 2"]);
   });
 });
-
-describe("speaksBangla", () => {
-  it("spots Bangla from the detected language or the script", async () => {
-    const { speaksBangla } = await import("./summarize");
-    const line = (text: string) => ({ speaker: "Speaker 1", startMs: 0, endMs: 1, text });
-    expect(speaksBangla("bn,en", [line("hello")])).toBe(true);
-    expect(speaksBangla("en", [line("ঠিক আছে, let's go")])).toBe(true);
-    expect(speaksBangla("en", [line("hello")])).toBe(false);
-    expect(speaksBangla(null, [])).toBe(false);
-  });
-});

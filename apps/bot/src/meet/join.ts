@@ -1,7 +1,7 @@
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { config, headless } from "../config";
 import { installAudioCapture, installCaptionWatcher } from "./capture";
-import { isBotName } from "./names";
+import { dedupeNames, isBotName } from "./names";
 
 export class JoinFailed extends Error {
   constructor(
@@ -161,7 +161,7 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
     await page.getByRole("button", { name: /leave call/i }).click({ timeout: 5_000 }).catch(() => {});
     // Signed in, Meet shows the bot under its Google account's name rather than the name it asked to join with.
     const botNames = [opts.botName, config.BOT_ACCOUNT_NAME];
-    const participants = [...seen].filter((n) => !isBotName(n, botNames));
+    const participants = dedupeNames([...seen].filter((n) => !isBotName(n, botNames)));
     return {
       joinedAt,
       leftAt: new Date(),
