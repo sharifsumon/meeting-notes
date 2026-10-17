@@ -36,6 +36,13 @@
       "when": 1792251367637,
       "tag": "0004_send_bot_now",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792251585166,
+      "tag": "0005_bilingual_notes",
+      "breakpoints": true
     }
   ]
 }

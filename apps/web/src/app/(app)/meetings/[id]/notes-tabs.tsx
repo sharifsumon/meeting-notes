@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ActionItem, TranscriptSegment } from "@minuteflow/db";
+import type { ActionItem, NoteContent, TranscriptSegment } from "@minuteflow/db";
 import { Icon } from "@/components/ui";
 import { seekAudio } from "./audio-player";
 
@@ -10,6 +10,8 @@ type Props = {
   decisions: string[];
   keyPoints: string[];
   actionItems: ActionItem[];
+  /** The notes in other languages; Bangla calls have "bn". */
+  translations: Record<string, NoteContent>;
   segments: TranscriptSegment[];
   recorded: boolean;
   /** A transcript was saved, even if it has no lines. */
@@ -31,9 +33,12 @@ function clock(ms: number) {
   return s >= 3600 ? `${Math.floor(s / 3600)}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments, recorded, transcribed }: Props) {
+export function NotesTabs({ translations, segments, recorded, transcribed, ...english }: Props) {
   const [tab, setTab] = useState<"summary" | "transcript" | "actions">("summary");
   const [query, setQuery] = useState("");
+  const [lang, setLang] = useState<"en" | "bn">("en");
+  const bangla = translations.bn;
+  const { summary, decisions, keyPoints, actionItems } = lang === "bn" && bangla ? bangla : english;
 
   const tabs = [
     { id: "summary", label: "Summary" },
@@ -59,24 +64,50 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
 
   return (
     <>
-      <div role="tablist" aria-label="Meeting notes" className="flex flex-wrap gap-1 border-b border-line">
-        {tabs.map((t) => {
-          const on = t.id === tab;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={on}
-              onClick={() => setTab(t.id)}
-              className={`-mb-px min-h-11 border-b-2 px-4 text-[15px] ${
-                on ? "border-accent font-semibold text-accent" : "border-transparent font-medium text-ink-3 hover:text-ink"
-              }`}
-            >
-              {t.label}
-            </button>
-          );
-        })}
+      <div className="flex flex-wrap items-end justify-between gap-2 border-b border-line">
+        <div role="tablist" aria-label="Meeting notes" className="flex flex-wrap gap-1">
+          {tabs.map((t) => {
+            const on = t.id === tab;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setTab(t.id)}
+                className={`-mb-px min-h-11 border-b-2 px-4 text-[15px] ${
+                  on ? "border-accent font-semibold text-accent" : "border-transparent font-medium text-ink-3 hover:text-ink"
+                }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        {bangla && tab !== "transcript" && (
+          <div
+            role="group"
+            aria-label="Notes language"
+            className="mb-1.5 flex rounded-[10px] border border-line bg-white p-0.5 text-sm"
+          >
+            {(
+              [
+                ["en", "English"],
+                ["bn", "বাংলা"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={lang === id}
+                onClick={() => setLang(id)}
+                className={`min-h-9 rounded-lg px-3 font-semibold ${lang === id ? "bg-accent text-white" : "text-ink-3 hover:text-ink"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {tab === "summary" && (
@@ -127,7 +158,13 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
                 <label htmlFor="tsearch" className="sr-only">
                   Search transcript
                 </label>
-                <input id="tsearch" type="search" placeholder="Search transcript" value={query} onChange={(e) => setQuery(e.target.value)} />
+                <input
+                  id="tsearch"
+                  type="search"
+                  placeholder="Search transcript"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
               </div>
             )}
           </div>
@@ -143,7 +180,9 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
                     AVATAR[speakers.indexOf(l.speaker) % AVATAR.length]
                   }`}
                 >
-                  {/^speaker (\d+)$/i.exec(l.speaker)?.[1] ? `S${/\d+$/.exec(l.speaker)![0]}` : l.speaker.slice(0, 2).toUpperCase()}
+                  {/^speaker (\d+)$/i.exec(l.speaker)?.[1]
+                    ? `S${/\d+$/.exec(l.speaker)![0]}`
+                    : l.speaker.slice(0, 2).toUpperCase()}
                 </span>
                 <div className="flex min-w-0 flex-col gap-1">
                   <div className="flex items-baseline gap-2.5">
@@ -169,7 +208,9 @@ export function NotesTabs({ summary, decisions, keyPoints, actionItems, segments
         <section className="card flex flex-col gap-1.5 p-6">
           <h2 className="mb-2.5 text-lg font-bold">Action items</h2>
           {actionItems.length === 0 ? (
-            <p className="text-[15px] leading-relaxed text-muted">{recorded && !silent ? "Action items will appear once AI notes are switched on." : empty}</p>
+            <p className="text-[15px] leading-relaxed text-muted">
+              {recorded && !silent ? "Action items will appear once AI notes are switched on." : empty}
+            </p>
           ) : (
             actionItems.map((x, i) => (
               <div key={i} className="flex flex-wrap items-center gap-3 border-t border-line-soft py-3">

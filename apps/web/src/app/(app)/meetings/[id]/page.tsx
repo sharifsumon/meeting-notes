@@ -22,13 +22,16 @@ const BOT_LABEL = {
   cancelled: "Skipped",
 } as const;
 
-/** "bn" → "Bangla", "en-US" → "American English"; falls back to the code. */
-function languageName(code: string) {
-  try {
-    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
-  } catch {
-    return code;
-  }
+/** "bn" → "Bangla", "en-US" → "American English", "bn,en" → "Bangla and English"; falls back to the code. */
+function languageName(codes: string) {
+  const name = (code: string) => {
+    try {
+      return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+    } catch {
+      return code;
+    }
+  };
+  return codes.split(",").map(name).join(" and ");
 }
 
 export default async function MeetingPage({ params }: { params: Promise<{ id: string }> }) {
@@ -120,6 +123,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             decisions={note?.decisions ?? []}
             keyPoints={note?.keyPoints ?? []}
             actionItems={note?.actionItems ?? []}
+            translations={note?.translations ?? {}}
             segments={transcript?.segments ?? []}
             recorded={hasRecording}
             transcribed={!!transcript}

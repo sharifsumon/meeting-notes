@@ -1,19 +1,21 @@
-import { botSessions, meetings, notes, transcripts, type ActionItem, type TranscriptSegment } from "@minuteflow/db";
+import { botSessions, meetings, notes, transcripts, type ActionItem, type NoteContent, type TranscriptSegment } from "@minuteflow/db";
 import { and, eq, inArray, isNull, like, not, or, sql } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 
-export type MeetingNotes = {
-  summary: string;
-  keyPoints: string[];
-  decisions: string[];
-  actionItems: ActionItem[];
-};
+export type MeetingNotes = NoteContent;
 
 /** Writes notes from a transcript. Swap the implementation to change model or provider. */
 export interface Summarizer {
   readonly name: string;
-  summarize(input: { title: string; segments: TranscriptSegment[]; participants?: string[] }): Promise<MeetingNotes>;
+  summarize(input: { title: string; segments: TranscriptSegment[]; participants?: string[]; language?: string }): Promise<MeetingNotes>;
+  /** The same notes in another language, e.g. "Bangla". */
+  translate(notes: MeetingNotes, language: string): Promise<MeetingNotes>;
+}
+
+/** Calls with any Bangla get notes in English and in Bangla. */
+export function speaksBangla(language: string | null, segments: TranscriptSegment[]) {
+  return Boolean(language?.split(",").some((l) => l.startsWith("bn"))) || segments.some((s) => /[\u0980-\u09FF]/.test(s.text));
 }
 
 function clock(ms: number) {
@@ -63,7 +65,7 @@ export function parseNotes(raw: string): MeetingNotes {
 
 const NOTES_SHAPE = `Reply with JSON only, in this shape:
 {"summary": "one paragraph, 3-6 sentences", "keyPoints": ["short topic", ...], "decisions": ["decision", ...], "actionItems": [{"text": "what needs doing", "owner": "who, if said", "due": "when, if said"}]}
-Use the language of the meeting. Only include decisions and action items that were actually stated. Use [] when there are none. Speakers are labelled "Speaker 1", "Speaker 2"; use real names only where the transcript says them.`;
+Only include decisions and action items that were actually stated. Use [] when there are none. Speakers are labelled "Speaker 1", "Speaker 2"; use real names only where the transcript says them.`;
 
 /** OpenAI-compatible chat completions with JSON output, retrying rate limits. */
 export function groq(apiKey: string, model: string): Summarizer {
@@ -99,10 +101,11 @@ export function groq(apiKey: string, model: string): Summarizer {
 
   return {
     name: `Groq (${model})`,
-    async summarize({ title, segments, participants = [] }) {
+    async summarize({ title, segments, participants = [], language }) {
       // Names help the model attribute action items when the transcript only numbers speakers.
       const header = participants.length ? `Meeting: ${title}\nPeople in the call: ${participants.join(", ")}` : `Meeting: ${title}`;
-      const system = `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}`;
+      const writeIn = language ? `Write the notes in ${language}, whatever languages the meeting used.` : "Use the language of the meeting.";
+      const system = `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}\n${writeIn}`;
       // Small chunks keep each request inside Groq's free-tier tokens-per-minute limit.
       const chunks = transcriptChunks(segments, 20_000);
       if (chunks.length === 1) {
@@ -118,8 +121,22 @@ export function groq(apiKey: string, model: string): Summarizer {
       }
       return parseNotes(
         await complete(
-          `You merge partial meeting notes into one set of notes, removing duplicates. ${NOTES_SHAPE}`,
+          `You merge partial meeting notes into one set of notes, removing duplicates. ${NOTES_SHAPE}\n${writeIn}`,
           `Meeting: ${title}\nNotes for each part, in order:\n${JSON.stringify(parts)}`,
+        ),
+      );
+    },
+    async translate(notes, language) {
+      const { summary, keyPoints, decisions, actionItems } = notes;
+      return parseNotes(
+        await complete(
+          `You translate meeting notes into ${language}. Keep people's names, product names and technical terms as they are. ${NOTES_SHAPE}`,
+          JSON.stringify({
+            summary,
+            keyPoints,
+            decisions,
+            actionItems: actionItems.map(({ text, owner, dueDate }) => ({ text, owner, due: dueDate })),
+          }),
         ),
       );
     },
@@ -146,6 +163,7 @@ export async function summarizePending(provider: Summarizer) {
       title: meetings.title,
       participants: botSessions.participants,
       segments: transcripts.segments,
+      language: transcripts.language,
     })
     .from(botSessions)
     .innerJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
@@ -165,10 +183,13 @@ export async function summarizePending(provider: Summarizer) {
     const log = (msg: string) => console.log(`[summarize ${s.sessionId}] ${msg}`);
     try {
       log(`Summarizing ${s.segments.length} segments with ${provider.name}`);
-      const result = await provider.summarize({ title: s.title, segments: s.segments, participants: s.participants });
+      const bilingual = speaksBangla(s.language, s.segments);
+      const input = { title: s.title, segments: s.segments, participants: s.participants };
+      const result = await provider.summarize(bilingual ? { ...input, language: "English" } : input);
+      const translations: Record<string, MeetingNotes> = bilingual ? { bn: await provider.translate(result, "Bangla (বাংলা)") } : {};
       await db
         .insert(notes)
-        .values({ meetingId: s.meetingId, ...result })
+        .values({ meetingId: s.meetingId, ...result, translations })
         .onConflictDoNothing();
       await db.update(botSessions).set({ status: "completed" }).where(eq(botSessions.id, s.sessionId));
       log(`Saved notes (${result.decisions.length} decisions, ${result.actionItems.length} action items)`);
