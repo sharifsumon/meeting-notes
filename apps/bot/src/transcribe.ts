@@ -158,7 +158,25 @@ export function nameSpeakers(segments: TranscriptSegment[], timeline: SpeakerTur
     names.set(p.label, p.name);
     used.add(p.name);
   }
-  return segments.map((seg) => ({ ...seg, speaker: names.get(seg.speaker) ?? seg.speaker }));
+  // Diarization can hear two people as one voice; the captions name each line's speaker directly.
+  return segments.map((seg) => ({ ...seg, speaker: captionedName(seg, timeline) ?? names.get(seg.speaker) ?? seg.speaker }));
+}
+
+/**
+ * The name the captions showed while this line was spoken. Turns can nest (an earlier speaker's
+ * turn left open while someone else talked), so of the turns covering at least half of the line,
+ * the shortest is the most specific one.
+ */
+export function captionedName(seg: TranscriptSegment, timeline: SpeakerTurn[]): string | undefined {
+  const lineMs = Math.max(1, seg.endMs - seg.startMs);
+  let best: SpeakerTurn | undefined;
+  for (const turn of timeline) {
+    const turnMs = Math.max(1, turn.endMs - turn.startMs);
+    const ms = Math.min(seg.endMs, turn.endMs) - Math.max(seg.startMs, turn.startMs);
+    if (ms < 0.5 * lineMs) continue;
+    if (!best || turnMs < best.endMs - best.startMs) best = turn;
+  }
+  return best?.name;
 }
 
 /**

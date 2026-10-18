@@ -167,13 +167,17 @@ export function installCaptionWatcher() {
       const name = block.lines[0]!.trim();
       const text = block.lines.slice(1).join(" ");
       const known = seen.get(block.el);
-      if (!known || known.turn.name !== name) {
+      // Meet keeps an earlier speaker's block on screen and keeps revising its words after someone
+      // else starts talking. Only the newest turn grows; an older block that gains real words
+      // means that person spoke again.
+      const grew = known && text.length - known.text.length > 10;
+      if (!known || known.turn.name !== name || (grew && known.turn !== turns[turns.length - 1])) {
         const turn = { name, startMs: Math.max(0, t - LAG_MS - 1_000), endMs: Math.max(0, t - LAG_MS) };
         turns.push(turn);
         seen.set(block.el, { turn, text });
       } else if (known.text !== text) {
         known.text = text;
-        known.turn.endMs = Math.max(known.turn.endMs, t - LAG_MS);
+        if (known.turn === turns[turns.length - 1]) known.turn.endMs = Math.max(known.turn.endMs, t - LAG_MS);
       }
     }
   }, 500);

@@ -15,4 +15,9 @@ describe("geminiSegments", () => {
     ]);
     expect(geminiSegments("{}", 0)).toEqual([]);
   });
+
+  it("keeps the complete segments of a reply that was cut off", () => {
+    const json = '[{"start": 1, "end": 2, "text": "এক"}, {"start": 3, "end": 4, "text": "দুই"}, {"start": 5, "end"';
+    expect(geminiSegments(json, 0).map((s) => s.text)).toEqual(["এক", "দুই"]);
+  });
 });

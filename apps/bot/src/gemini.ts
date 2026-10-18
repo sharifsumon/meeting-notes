@@ -7,8 +7,8 @@ import type { WhisperSegment } from "./whisper";
 
 const run = promisify(execFile);
 
-// Ten minutes of call audio stays well inside both the inline request size and the reply length.
-const CHUNK_S = 600;
+// Five minutes of a busy call stays well inside both the inline request size and the reply length.
+const CHUNK_S = 300;
 
 const PROMPT = `Transcribe this meeting recording verbatim.
 - Write Bangla in Bengali script and English words in Latin script, exactly as spoken. Do not translate, correct or summarise.
@@ -42,6 +42,7 @@ export function gemini(apiKey: string, model = "gemini-3.8-flash") {
             responseMimeType: "application/json",
             responseSchema: SCHEMA,
             thinkingConfig: { thinkingBudget: 0 },
+            maxOutputTokens: 65_536,
           },
         }),
         signal: AbortSignal.timeout(10 * 60_000),
@@ -63,14 +64,15 @@ export function gemini(apiKey: string, model = "gemini-3.8-flash") {
       const chunks = await oggChunks(audio, CHUNK_S);
       const lines: WhisperSegment[] = [];
       for (const [i, chunk] of chunks.entries()) lines.push(...(await transcribeChunk(chunk, i * CHUNK_S * 1000)));
-      return lines;
+      // Gemini's timestamps sometimes step backwards.
+      return lines.sort((a, b) => a.startMs - b.startMs);
     },
   };
 }
 
 /** Parses Gemini's JSON segments, shifting them by the chunk's start. */
 export function geminiSegments(json: string, offsetMs: number): WhisperSegment[] {
-  const raw = JSON.parse(json) as unknown;
+  const raw = parseCutOff(json);
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((s): WhisperSegment[] => {
     const { start, end, text } = (s ?? {}) as { start?: unknown; end?: unknown; text?: unknown };
@@ -79,6 +81,17 @@ export function geminiSegments(json: string, offsetMs: number): WhisperSegment[]
     const endMs = typeof end === "number" && end >= start ? Math.round(end * 1000) + offsetMs : startMs + 1000;
     return [{ startMs, endMs, text: text.trim() }];
   });
+}
+
+/** Parses a JSON array, keeping the complete items when the reply was cut off mid-array. */
+function parseCutOff(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch (err) {
+    const lastItem = json.lastIndexOf("}");
+    if (!json.trimStart().startsWith("[") || lastItem < 0) throw err;
+    return JSON.parse(`${json.slice(0, lastItem + 1)}]`);
+  }
 }
 
 /** Rewraps the recording's Opus audio as Ogg (Gemini doesn't take WebM), in pieces of `seconds`. */

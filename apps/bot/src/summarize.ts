@@ -30,17 +30,30 @@ function clock(ms: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** Transcript as "[m:ss] Speaker: text" lines, split so each chunk stays under maxChars. */
-export function transcriptChunks(segments: TranscriptSegment[], maxChars: number): string[] {
+/**
+ * Rough token count: about four Latin characters per token, but Bangla and other scripts take
+ * about one token per character.
+ */
+export function estimateTokens(text: string) {
+  const ascii = text.replace(/[^\x00-\x7F]/g, "").length;
+  return Math.ceil(ascii / 4) + (text.length - ascii);
+}
+
+/** Transcript as "[m:ss] Speaker: text" lines, split so each chunk stays under maxTokens. */
+export function transcriptChunks(segments: TranscriptSegment[], maxTokens: number): string[] {
   const chunks: string[] = [];
   let current = "";
+  let tokens = 0;
   for (const s of segments) {
     const line = `[${clock(s.startMs)}] ${s.speaker}: ${s.text}\n`;
-    if (current && current.length + line.length > maxChars) {
+    const lineTokens = estimateTokens(line);
+    if (current && tokens + lineTokens > maxTokens) {
       chunks.push(current);
       current = "";
+      tokens = 0;
     }
     current += line;
+    tokens += lineTokens;
   }
   if (current) chunks.push(current);
   return chunks;
@@ -119,6 +132,24 @@ export function withAttendees(notes: MeetingNotes, participants: string[], segme
   return { ...notes, minutes: { ...minutes, attendees } };
 }
 
+/** Groups notes in order so each group's JSON stays under maxTokens, at least two to a group. */
+export function notesBatches(parts: MeetingNotes[], maxTokens: number): MeetingNotes[][] {
+  const batches: MeetingNotes[][] = [];
+  let tokens = 0;
+  for (const part of parts) {
+    const t = estimateTokens(JSON.stringify(part));
+    const last = batches[batches.length - 1];
+    if (last && (last.length < 2 || tokens + t <= maxTokens)) {
+      last.push(part);
+      tokens += t;
+    } else {
+      batches.push([part]);
+      tokens = t;
+    }
+  }
+  return batches;
+}
+
 /** OpenAI-compatible chat completions with JSON output, retrying rate limits. */
 export function groq(apiKey: string, model: string): Summarizer {
   async function complete(system: string, user: string): Promise<string> {
@@ -158,8 +189,9 @@ export function groq(apiKey: string, model: string): Summarizer {
       const header = participants.length ? `Meeting: ${title}\nPeople in the call: ${participants.join(", ")}` : `Meeting: ${title}`;
       const writeIn = language ? `Write the notes in ${language}, whatever languages the meeting used.` : "Use the language of the meeting.";
       const system = `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}\n${writeIn}`;
-      // Small chunks keep each request inside Groq's free-tier tokens-per-minute limit.
-      const chunks = transcriptChunks(segments, 20_000);
+      // Small chunks keep each request inside Groq's tokens-per-minute limit (8k for gpt-oss-120b
+      // on demand), counting the instructions and the reply too.
+      const chunks = transcriptChunks(segments, 3_500);
       if (chunks.length === 1) {
         return withAttendees(parseNotes(await complete(system, `${header}\n\nTranscript:\n${chunks[0]}`)), participants, segments);
       }
@@ -171,16 +203,22 @@ export function groq(apiKey: string, model: string): Summarizer {
           ),
         );
       }
-      return withAttendees(
+      const merge = async (batch: MeetingNotes[]) =>
         parseNotes(
           await complete(
             `You merge partial meeting notes into one set of notes, removing duplicates and joining topics that continue across parts. ${NOTES_SHAPE}\n${writeIn}`,
-            `Meeting: ${title}\nNotes for each part, in order:\n${JSON.stringify(parts)}`,
+            `Meeting: ${title}\nNotes for each part, in order:\n${JSON.stringify(batch)}`,
           ),
-        ),
-        participants,
-        segments,
-      );
+        );
+      // A long call's notes can be too big to merge at once, so merge them a few at a time.
+      let merged = parts;
+      while (merged.length > 1) {
+        const batches = notesBatches(merged, 3_500);
+        merged = [];
+        for (const batch of batches) merged.push(batch.length === 1 ? batch[0]! : await merge(batch));
+        if (batches.length === 1) break;
+      }
+      return withAttendees(merged[0]!, participants, segments);
     },
     async translate(notes, language) {
       const { summary, keyPoints, decisions, actionItems, minutes } = notes;

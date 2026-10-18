@@ -115,6 +115,19 @@ describe("nameSpeakers", () => {
     expect(named.map((s) => s.speaker)).toEqual(["Sharif Islam", "Guest Two", "Sharif Islam", "Speaker 3"]);
   });
 
+  it("names lines from the captions when diarization heard two people as one voice", async () => {
+    const { nameSpeakers } = await import("./transcribe");
+    // Like the Akij Bakers call: one label for everyone, and Sharif's caption turn left open around Shihab's.
+    const named = nameSpeakers(
+      [seg("Speaker 1", 9_000, 18_000), seg("Speaker 1", 19_000, 33_000), seg("Speaker 1", 35_000, 60_000)],
+      [
+        { name: "Mohammed Shariful Islam", startMs: 8_800, endMs: 69_800 },
+        { name: "Shihab Bhuiyan", startMs: 21_800, endMs: 33_800 },
+      ],
+    );
+    expect(named.map((s) => s.speaker)).toEqual(["Mohammed Shariful Islam", "Shihab Bhuiyan", "Mohammed Shariful Islam"]);
+  });
+
   it("leaves labels alone without captions", async () => {
     const { nameSpeakers } = await import("./transcribe");
     expect(nameSpeakers([seg("Speaker 1", 0, 1_000)], [])[0]!.speaker).toBe("Speaker 1");

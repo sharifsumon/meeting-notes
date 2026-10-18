@@ -14,8 +14,22 @@ afterEach(() => vi.unstubAllGlobals());
 describe("summaries", () => {
   it("splits transcripts into chunks with timestamps and speakers", async () => {
     const { transcriptChunks } = await import("./summarize");
-    const chunks = transcriptChunks([seg(0, "Speaker 1", "Hello"), seg(65_000, "Speaker 2", "Hi there")], 30);
+    const chunks = transcriptChunks([seg(0, "Speaker 1", "Hello"), seg(65_000, "Speaker 2", "Hi there")], 8);
     expect(chunks).toEqual(["[0:00] Speaker 1: Hello\n", "[1:05] Speaker 2: Hi there\n"]);
+  });
+
+  it("counts Bangla as about a token per character", async () => {
+    const { estimateTokens } = await import("./summarize");
+    expect(estimateTokens("Hello world!")).toBe(3);
+    expect(estimateTokens("আমরা deploy")).toBe(4 + 2);
+  });
+
+  it("merges long calls' notes a few parts at a time", async () => {
+    const { notesBatches, parseNotes } = await import("./summarize");
+    const part = (summary: string) => parseNotes(JSON.stringify({ summary }));
+    const parts = [part("a".repeat(400)), part("b".repeat(400)), part("c".repeat(400)), part("d")];
+    expect(notesBatches(parts, 250).map((b) => b.length)).toEqual([2, 2]);
+    expect(notesBatches(parts, 10_000).map((b) => b.length)).toEqual([4]);
   });
 
   it("parses model JSON leniently", async () => {
