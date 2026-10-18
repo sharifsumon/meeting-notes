@@ -174,7 +174,12 @@ export function groq(apiKey: string, model: string): Summarizer {
         await new Promise((r) => setTimeout(r, Math.min(waitMs, 120_000)));
         continue;
       }
-      if (!res.ok) throw new Error(`Groq returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      if (!res.ok) {
+        const error = (await res.text()).slice(0, 300);
+        // The model sometimes writes JSON that fails Groq's check; a fresh try usually passes.
+        if (res.status === 400 && /json_validate_failed|failed to validate json/i.test(error) && attempt < 2) continue;
+        throw new Error(`Groq returned ${res.status}: ${error}`);
+      }
       const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       const content = body.choices?.[0]?.message?.content;
       if (!content) throw new Error("Groq returned no content");

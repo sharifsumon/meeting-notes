@@ -244,6 +244,20 @@ async function prepareLobby(page: Page) {
   }
 }
 
+/** Labels of the buttons on screen, for logs when the bot can't find what it needs. */
+async function visibleButtons(page: Page): Promise<string[]> {
+  return page
+    .getByRole("button")
+    .evaluateAll((els) =>
+      els
+        .filter((el) => (el as HTMLElement).offsetParent !== null)
+        .map((el) => el.getAttribute("aria-label") || (el as HTMLElement).innerText)
+        .filter(Boolean)
+        .slice(0, 40),
+    )
+    .catch(() => []);
+}
+
 function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -265,13 +279,25 @@ async function joinFromLobby(
   // Guests type a name; a signed-in bot joins under its Google account name instead.
   const nameBox = page.getByRole("textbox", { name: /your name/i });
   const joinButton = page.getByRole("button", { name: /ask to join|join now/i });
-  const lobby = await Promise.race([
-    nameBox.waitFor({ timeout: 30_000 }).then(() => "guest" as const),
-    joinButton.waitFor({ timeout: 30_000 }).then(() => "signed-in" as const),
-    blocked.waitFor({ timeout: 30_000 }).then(() => "blocked" as const),
-  ]).catch(() => "unknown" as const);
+  const findLobby = () =>
+    Promise.race([
+      nameBox.waitFor({ timeout: 45_000 }).then(() => "guest" as const),
+      joinButton.waitFor({ timeout: 45_000 }).then(() => "signed-in" as const),
+      blocked.waitFor({ timeout: 45_000 }).then(() => "blocked" as const),
+    ]).catch(() => "unknown" as const);
+  let lobby = await findLobby();
+  if (lobby === "unknown") {
+    // A busy server can leave the lobby half drawn; one reload usually brings the button back.
+    log(`No join button yet; reloading. Buttons: ${(await visibleButtons(page)).join(" | ")}`);
+    await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+    await prepareLobby(page);
+    lobby = await findLobby();
+  }
   if (lobby === "blocked") throw new JoinFailed(BLOCKED_MESSAGE, "blocked");
-  if (lobby === "unknown") throw new JoinFailed("Could not find the join button on the Meet lobby page", "error");
+  if (lobby === "unknown") {
+    log(`Still no join button. Buttons: ${(await visibleButtons(page)).join(" | ")}`);
+    throw new JoinFailed("Could not find the join button on the Meet lobby page", "error");
+  }
   if (lobby === "guest") await nameBox.fill(botName);
 
   await joinButton.click({ timeout: 15_000 });
@@ -400,16 +426,7 @@ async function enableCaptions(page: Page, log: (m: string) => void) {
   if ((await captionsState(page)) === "on") return log("Captions on; noting who speaks");
 
   // Leave a trail for fixing this: what the bot could press.
-  const buttons = await page
-    .getByRole("button")
-    .evaluateAll((els) =>
-      els
-        .filter((el) => (el as HTMLElement).offsetParent !== null)
-        .map((el) => el.getAttribute("aria-label") || (el as HTMLElement).innerText)
-        .filter(Boolean)
-        .slice(0, 40),
-    )
-    .catch(() => []);
+  const buttons = await visibleButtons(page);
   log(`Captions didn't turn on yet; will retry during the call. Buttons: ${buttons.join(" | ")}`);
 }
 
