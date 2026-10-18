@@ -3,7 +3,7 @@ import { botSessions, calendars, meetings, notes } from "@minuteflow/db";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
 import type { BotStatus } from "@/components/ui";
 import { db } from "@/lib/db";
-import type { MeetingPlatform } from "@/lib/meeting-links";
+import { meetCode, type MeetingPlatform } from "@/lib/meeting-links";
 
 /** A meeting as the browser sees it: dates as ISO strings so they can cross to client components. */
 export type MeetingRow = {
@@ -72,6 +72,22 @@ export function sessionOf(): SQL {
   return or(eq(botSessions.meetingId, meetings.id), eq(botSessions.id, meetings.sharedSessionId))!;
 }
 
+/**
+ * The same event can arrive from several of a user's calendars (a team calendar and their own, or
+ * two accounts). Lists show it once, keeping the copy the bot is attached to.
+ */
+export function oneCopyEach(rows: MeetingRow[]): MeetingRow[] {
+  const rank = (r: MeetingRow) => (r.hasNotes ? 2 : r.status ? 1 : 0);
+  const best = new Map<string, MeetingRow>();
+  for (const r of rows) {
+    const key = `${meetCode(r.meetingUrl) ?? r.meetingUrl ?? r.id}|${r.startsAt}`;
+    const seen = best.get(key);
+    if (!seen || rank(r) > rank(seen)) best.set(key, r);
+  }
+  const keep = new Set(best.values());
+  return rows.filter((r) => keep.has(r));
+}
+
 function base() {
   return db()
     .select(columns)
@@ -87,7 +103,7 @@ export async function upcomingMeetings(userId: string): Promise<MeetingRow[]> {
     .where(and(visible(userId), gte(meetings.endsAt, new Date())))
     .orderBy(asc(meetings.startsAt))
     .limit(200);
-  return rows.map(toRow);
+  return oneCopyEach(rows.map(toRow));
 }
 
 /** Meetings the bot was sent to, newest first. */
@@ -96,7 +112,7 @@ export async function recordedMeetings(userId: string): Promise<MeetingRow[]> {
     .where(and(visible(userId), isNotNull(botSessions.id), lte(meetings.startsAt, new Date())))
     .orderBy(desc(meetings.startsAt))
     .limit(200);
-  return rows.map(toRow);
+  return oneCopyEach(rows.map(toRow));
 }
 
 /** Meetings overlapping [from, to). */
@@ -105,5 +121,5 @@ export async function meetingsBetween(userId: string, from: Date, to: Date): Pro
     .where(and(visible(userId), gte(meetings.endsAt, from), lte(meetings.startsAt, to)))
     .orderBy(asc(meetings.startsAt))
     .limit(500);
-  return rows.map(toRow);
+  return oneCopyEach(rows.map(toRow));
 }

@@ -185,7 +185,7 @@ export function captionedName(seg: TranscriptSegment, timeline: SpeakerTurn[]): 
  */
 export function nameOnlySpeaker(segments: TranscriptSegment[], participants: string[]): TranscriptSegment[] {
   const labels = new Set(segments.map((s) => s.speaker));
-  if (participants.length !== 1 || labels.size !== 1 || !/^Speaker \d+$/.test([...labels][0]!)) return segments;
+  if (participants.length !== 1 || labels.size !== 1 || !/^Speaker \w+$/.test([...labels][0]!)) return segments;
   return segments.map((s) => ({ ...s, speaker: participants[0]! }));
 }
 

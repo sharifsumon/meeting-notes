@@ -7,8 +7,11 @@ import type { TranscriptSegment } from "@minuteflow/db";
 
 const run = promisify(execFile);
 
-/** A stretch of speech Whisper heard, without a speaker. */
-export type WhisperSegment = { startMs: number; endMs: number; text: string };
+/**
+ * A stretch of speech a transcriber heard. `voice` is set when it also told voices apart (Gemini):
+ * a label that only means the same person within one piece of the recording, such as "0:A".
+ */
+export type WhisperSegment = { startMs: number; endMs: number; text: string; voice?: string };
 
 // Groq takes files up to 25 MB; longer calls are sent in pieces of this many seconds.
 const MAX_BYTES = 24 * 1024 * 1024;
@@ -124,22 +127,43 @@ async function splitAudio(audio: Buffer, seconds: number): Promise<Buffer[]> {
 }
 
 /**
- * Gives each of Whisper's lines the speaker Deepgram heard at the same time. Whisper writes Bangla
- * and mixed speech well but can't tell voices apart; Deepgram's diarization can.
+ * Gives each line a speaker. Deepgram's diarization says who spoke when, unless the transcriber
+ * told more voices apart itself (Gemini), which happens on short calls and quick back-and-forth.
  */
 export function assignSpeakers(lines: WhisperSegment[], diarized: TranscriptSegment[]): TranscriptSegment[] {
+  const voices = new Set(lines.flatMap((l) => (l.voice ? [l.voice.split(":")[1]] : [])));
+  const heard = new Set(diarized.map((d) => d.speaker));
+  // Use Gemini's voices only when it told more people apart than Deepgram did.
+  if (voices.size > heard.size) {
+    // Gemini's letters are matched by letter across the pieces of a long call.
+    const numbers = new Map<string, string>();
+    let last = "Speaker 1";
+    return lines.map((l) => {
+      if (l.voice) {
+        const letter = l.voice.split(":")[1] ?? l.voice;
+        if (!numbers.has(letter)) numbers.set(letter, `Speaker ${numbers.size + 1}`);
+        last = numbers.get(letter)!;
+      }
+      return { speaker: last, startMs: l.startMs, endMs: l.endMs, text: l.text };
+    });
+  }
+
   let last = diarized[0]?.speaker ?? "Speaker 1";
   return lines.map((line) => {
-    const overlap = new Map<string, number>();
-    for (const d of diarized) {
-      const ms = Math.min(line.endMs, d.endMs) - Math.max(line.startMs, d.startMs);
-      if (ms > 0) overlap.set(d.speaker, (overlap.get(d.speaker) ?? 0) + ms);
-    }
     // Lines in a pause Deepgram didn't diarize keep the previous speaker.
-    const best = [...overlap].sort((a, b) => b[1] - a[1])[0];
-    if (best) last = best[0];
+    const best = mostOverlap(line, diarized);
+    if (best) last = best;
     return { speaker: last, startMs: line.startMs, endMs: line.endMs, text: line.text };
   });
+}
+
+function mostOverlap(line: { startMs: number; endMs: number }, diarized: TranscriptSegment[]): string | undefined {
+  const overlap = new Map<string, number>();
+  for (const d of diarized) {
+    const ms = Math.min(line.endMs, d.endMs) - Math.max(line.startMs, d.startMs);
+    if (ms > 0) overlap.set(d.speaker, (overlap.get(d.speaker) ?? 0) + ms);
+  }
+  return [...overlap].sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
 const BENGALI = /[ঀ-৿]/;

@@ -3,7 +3,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AD_HOC_MEETING_TITLE, botSessions, calendars, meetings, notes, users } from "@minuteflow/db";
-import { and, eq, gt, inArray, isNotNull, isNull, lte, notInArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, lte, ne, notInArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { env } from "@/env";
@@ -86,7 +86,11 @@ export async function setAutoRecord(enabled: boolean): Promise<ActionResult> {
 /** "Send bot now" on a calendar meeting: the bot joins right away instead of at the start time. */
 export async function sendBotToMeeting(meetingId: string): Promise<ActionResult> {
   const userId = await requireUserId();
-  const withBot = db().select({ id: botSessions.meetingId }).from(botSessions);
+  // A bot still queued for this meeting counts as not sent yet: asking now moves it to the front.
+  const withBot = db()
+    .select({ id: botSessions.meetingId })
+    .from(botSessions)
+    .where(ne(botSessions.status, "scheduled"));
   const updated = await db()
     .update(meetings)
     .set({ recordEnabled: true, botRequestedAt: new Date() })

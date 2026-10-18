@@ -3,7 +3,7 @@ import { and, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or } from "dr
 import { config } from "./config";
 import { db } from "./db";
 import { meetCode } from "./meet/links";
-import { joinQueue } from "./queue";
+import { joinQueue, PRIORITY_CALENDAR, PRIORITY_SENT_NOW } from "./queue";
 import { type RecordedSession, sharedSessionFor } from "./shared";
 
 // A bot for the same link within this window counts as the same call.
@@ -34,7 +34,13 @@ export async function scheduleDueMeetings(now = new Date()) {
   const joinBy = new Date(now.getTime() + config.BOT_JOIN_EARLY_S * 1000);
 
   const due = await db
-    .select({ id: meetings.id, meetingUrl: meetings.meetingUrl, startsAt: meetings.startsAt, endsAt: meetings.endsAt })
+    .select({
+      id: meetings.id,
+      meetingUrl: meetings.meetingUrl,
+      startsAt: meetings.startsAt,
+      endsAt: meetings.endsAt,
+      botRequestedAt: meetings.botRequestedAt,
+    })
     .from(meetings)
     .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id))
     .where(
@@ -85,10 +91,31 @@ export async function scheduleDueMeetings(now = new Date()) {
     if (!session) continue; // another scheduler got there first
     // A bot of its own replaces a recording shared from someone else's (one that never got in).
     await db.update(meetings).set({ sharedSessionId: null }).where(eq(meetings.id, m.id));
-    await joinQueue.add("join", { botSessionId: session.id, meetingId: m.id }, { jobId: session.id, attempts: 1 });
+    await joinQueue.add(
+      "join",
+      { botSessionId: session.id, meetingId: m.id },
+      { jobId: session.id, attempts: 1, priority: m.botRequestedAt ? PRIORITY_SENT_NOW : PRIORITY_CALENDAR },
+    );
     console.log(`Scheduled bot ${session.id} for meeting ${m.id}`);
   }
+  await promoteSentNow();
   return due.length;
+}
+
+/** A calendar call that's already queued moves to the front once someone presses "Send bot now". */
+async function promoteSentNow() {
+  const queued = await db
+    .select({ id: botSessions.id })
+    .from(botSessions)
+    .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
+    .where(and(eq(botSessions.status, "scheduled"), isNotNull(meetings.botRequestedAt)));
+  for (const { id } of queued) {
+    const job = await joinQueue.getJob(id);
+    if (!job || job.opts.priority === PRIORITY_SENT_NOW) continue;
+    if (!["waiting", "prioritized"].includes(await job.getState())) continue;
+    await job.changePriority({ priority: PRIORITY_SENT_NOW });
+    console.log(`Moved bot ${id} to the front of the queue`);
+  }
 }
 
 // How far back meetings are matched to someone else's recording.

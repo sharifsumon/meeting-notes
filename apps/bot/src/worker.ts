@@ -4,6 +4,7 @@ import { db } from "./db";
 import { JoinFailed, recordMeet } from "./meet/join";
 import { meetCode } from "./meet/links";
 import { botNameFor } from "./scheduler";
+import { sentNowCallWaiting } from "./queue";
 import { openRecording } from "./storage";
 
 // Stay at most this long past the scheduled end if people are still talking.
@@ -72,6 +73,8 @@ export async function runBotSession(botSessionId: string) {
       // Follow the MinuteFlow users: leave shortly after the last of them does.
       ownerNames: await ownerNamesFor(meeting, ownerName),
       onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
+      // A calendar call nobody is letting the bot into makes way for a call someone sent the bot to.
+      giveWay: meeting.botRequestedAt ? undefined : sentNowCallWaiting,
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
       // A meeting sent by link gets the call's name from Meet.
       onTitle: (title) =>

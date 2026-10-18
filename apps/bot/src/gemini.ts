@@ -7,22 +7,24 @@ import type { WhisperSegment } from "./whisper";
 
 const run = promisify(execFile);
 
-// Five minutes of a busy call stays well inside both the inline request size and the reply length.
-const CHUNK_S = 300;
+// Fifteen minutes keeps most calls in one piece, so Gemini's voice letters cover the whole call,
+// and stays inside the inline request size and the reply length.
+const CHUNK_S = 900;
 
 const PROMPT = `Transcribe this meeting recording verbatim.
 - Write Bangla in Bengali script and English words in Latin script, exactly as spoken. Do not translate, correct or summarise.
 - Leave out silence, music and background noise. Never invent words that weren't said.
 - Names and terms that may come up: MinuteFlow, Minute Flow, Google Meet.
-- Split the transcript into short segments at natural pauses or speaker changes.
+- Split the transcript into short segments at natural pauses and at every change of speaker.
+- "speaker" tells voices apart: "A" for the first voice heard, "B" for the second, and so on. The same voice keeps its letter for the whole recording, and a new voice gets the next letter.
 - "start" and "end" are seconds from the start of this recording.`;
 
 const SCHEMA = {
   type: "ARRAY",
   items: {
     type: "OBJECT",
-    properties: { start: { type: "NUMBER" }, end: { type: "NUMBER" }, text: { type: "STRING" } },
-    required: ["start", "end", "text"],
+    properties: { start: { type: "NUMBER" }, end: { type: "NUMBER" }, speaker: { type: "STRING" }, text: { type: "STRING" } },
+    required: ["start", "end", "speaker", "text"],
   },
 };
 
@@ -75,11 +77,13 @@ export function geminiSegments(json: string, offsetMs: number): WhisperSegment[]
   const raw = parseCutOff(json);
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((s): WhisperSegment[] => {
-    const { start, end, text } = (s ?? {}) as { start?: unknown; end?: unknown; text?: unknown };
+    const { start, end, text, speaker } = (s ?? {}) as { start?: unknown; end?: unknown; text?: unknown; speaker?: unknown };
     if (typeof start !== "number" || typeof text !== "string" || !text.trim()) return [];
     const startMs = Math.round(start * 1000) + offsetMs;
     const endMs = typeof end === "number" && end >= start ? Math.round(end * 1000) + offsetMs : startMs + 1000;
-    return [{ startMs, endMs, text: text.trim() }];
+    // Gemini's letters only hold within one piece of the recording, so the piece's start is part of the label.
+    const voice = typeof speaker === "string" && speaker.trim() ? `${offsetMs}:${speaker.trim().toUpperCase()}` : undefined;
+    return [{ startMs, endMs, text: text.trim(), ...(voice ? { voice } : {}) }];
   });
 }
 

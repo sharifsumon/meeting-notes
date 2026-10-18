@@ -90,7 +90,9 @@ export function parseMinutes(v: unknown): Minutes | undefined {
 
 /** Validates the model's JSON loosely: anything missing becomes empty rather than failing the meeting. */
 export function parseNotes(raw: string): MeetingNotes {
-  const v = JSON.parse(raw) as Record<string, unknown>;
+  // Outside JSON mode the model may wrap the object in a sentence or a code fence.
+  const json = raw.trim().startsWith("{") ? raw : raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
+  const v = JSON.parse(json) as Record<string, unknown>;
   const items = Array.isArray(v.actionItems) ? v.actionItems : [];
   const minutes = parseMinutes(v.minutes);
   return {
@@ -153,6 +155,10 @@ export function notesBatches(parts: MeetingNotes[], maxTokens: number): MeetingN
 /** OpenAI-compatible chat completions with JSON output, retrying rate limits. */
 export function groq(apiKey: string, model: string): Summarizer {
   async function complete(system: string, user: string): Promise<string> {
+    // Groq checks JSON mode replies and rejects the whole reply over one slip, which long notes
+    // sometimes hit. After two of those, ask without JSON mode; parseNotes copes with stray text.
+    let jsonMode = true;
+    let jsonFailures = 0;
     for (let attempt = 0; ; attempt++) {
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
@@ -160,9 +166,9 @@ export function groq(apiKey: string, model: string): Summarizer {
         body: JSON.stringify({
           model,
           temperature: 0.2,
-          response_format: { type: "json_object" },
+          ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
           messages: [
-            { role: "system", content: system },
+            { role: "system", content: jsonMode ? system : `${system}\nReply with the JSON object only.` },
             { role: "user", content: user },
           ],
         }),
@@ -176,8 +182,10 @@ export function groq(apiKey: string, model: string): Summarizer {
       }
       if (!res.ok) {
         const error = (await res.text()).slice(0, 300);
-        // The model sometimes writes JSON that fails Groq's check; a fresh try usually passes.
-        if (res.status === 400 && /json_validate_failed|failed to validate json/i.test(error) && attempt < 2) continue;
+        if (res.status === 400 && /json_validate_failed|failed to validate json/i.test(error) && jsonFailures < 2) {
+          if (++jsonFailures === 2) jsonMode = false;
+          continue;
+        }
         throw new Error(`Groq returned ${res.status}: ${error}`);
       }
       const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };

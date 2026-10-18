@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { cp, rm } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { config, headless } from "../config";
@@ -25,6 +26,8 @@ export type MeetSessionOptions = {
   leaveBy: Date;
   /** How long to wait in the lobby for the host to admit the bot. */
   admitTimeoutMs?: number;
+  /** Checked while waiting in the lobby; true means stop waiting so another call can have this bot. */
+  giveWay?: () => Promise<boolean>;
   /** Leave after being the only participant this long. */
   aloneTimeoutMs?: number;
   /**
@@ -44,6 +47,36 @@ export type MeetSessionOptions = {
   log?: (msg: string) => void;
 };
 
+/**
+ * A black picture and silence for Chrome's fake camera and microphone. Its defaults are a moving
+ * test pattern and a beep, which people would see and hear if Meet ever turned them back on.
+ */
+async function blankMediaArgs(): Promise<string[]> {
+  const dir = path.join(tmpdir(), "minuteflow-media");
+  const video = path.join(dir, "black.y4m");
+  const audio = path.join(dir, "silence.wav");
+  await mkdir(dir, { recursive: true });
+  const [w, h] = [320, 240];
+  const frame = Buffer.concat([Buffer.from("FRAME\n"), Buffer.alloc(w * h, 16), Buffer.alloc((w * h) / 2, 128)]);
+  await writeFile(video, Buffer.concat([Buffer.from(`YUV4MPEG2 W${w} H${h} F1:1 Ip A1:1 C420jpeg\n`), frame]));
+  const samples = 16_000; // one second, 16-bit mono at 16 kHz; Chrome loops it
+  const wav = Buffer.alloc(44 + samples * 2);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(36 + samples * 2, 4);
+  wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); // PCM
+  wav.writeUInt16LE(1, 22); // mono
+  wav.writeUInt32LE(16_000, 24);
+  wav.writeUInt32LE(32_000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(samples * 2, 40);
+  await writeFile(audio, wav);
+  return [`--use-file-for-fake-video-capture=${video}`, `--use-file-for-fake-audio-capture=${audio}`];
+}
+
 const BROWSER_ARGS = [
   "--use-fake-ui-for-media-stream",
   "--use-fake-device-for-media-stream",
@@ -61,12 +94,27 @@ const BROWSER_ARGS = [
 // Chrome locks a profile to one browser, so only one bot at a time uses the signed-in profile itself.
 let profileInUse = false;
 
-// Caches and Chrome's lock files aren't needed to stay signed in.
-const SKIP_IN_COPY = /^(Singleton\w*|Cache|Code Cache|GPUCache|GrShaderCache|ShaderCache|DawnCache|Crashpad|component_crx_cache)$/;
+// Caches, lock files and Chrome's scratch files aren't needed to stay signed in.
+const SKIP_IN_COPY =
+  /^(Singleton\w*|lockfile|LOCK|BrowserMetrics.*|.*\.pma|Cache|Code Cache|GPUCache|GrShaderCache|ShaderCache|DawnCache|Crashpad|component_crx_cache)$/;
 
-/** Copies the signed-in profile for a bot that runs while another bot holds the original. */
+/**
+ * Copies the signed-in profile for a bot that runs while another bot holds the original. That
+ * Chrome keeps creating and deleting files, so a file that vanishes mid-copy is skipped.
+ */
 export async function copyProfile(from: string, to: string) {
-  await cp(from, to, { recursive: true, filter: (src) => !SKIP_IN_COPY.test(path.basename(src)) });
+  await mkdir(to, { recursive: true });
+  for (const entry of await readdir(from, { withFileTypes: true }).catch(() => [])) {
+    if (SKIP_IN_COPY.test(entry.name)) continue;
+    const src = path.join(from, entry.name);
+    const dest = path.join(to, entry.name);
+    try {
+      if (entry.isDirectory()) await copyProfile(src, dest);
+      else if (entry.isFile()) await copyFile(src, dest);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
 }
 
 /**
@@ -91,7 +139,7 @@ export async function launchContext(): Promise<BrowserContext> {
         ...options,
         executablePath: config.CHROME_PATH,
         headless,
-        args: BROWSER_ARGS,
+        args: [...BROWSER_ARGS, ...(await blankMediaArgs())],
       });
       context.on("close", () => void release());
       return context;
@@ -100,7 +148,11 @@ export async function launchContext(): Promise<BrowserContext> {
       throw err;
     }
   }
-  const browser = await chromium.launch({ executablePath: config.CHROME_PATH, headless, args: BROWSER_ARGS });
+  const browser = await chromium.launch({
+    executablePath: config.CHROME_PATH,
+    headless,
+    args: [...BROWSER_ARGS, ...(await blankMediaArgs())],
+  });
   const context = await browser.newContext(options);
   context.on("close", () => void browser.close().catch(() => {}));
   return context;
@@ -162,13 +214,18 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
     const owner = names.length ? ownersPattern(names) : null;
     await prepareLobby(page);
 
-    await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 5 * 60_000, log, opts.onWaitingRoom);
+    await joinFromLobby(page, opts.botName, opts.admitTimeoutMs ?? 5 * 60_000, log, opts.onWaitingRoom, opts.giveWay);
     const joinedAt = new Date();
     log("In the meeting; recording");
 
     await page.evaluate(() => (window as unknown as { __mfStart: () => void }).__mfStart());
     const levelTimer = setInterval(() => void logLevel(page, log), opts.levelLogMs ?? 60_000);
     await Promise.resolve(opts.onAdmitted?.(joinedAt)).catch((err) => log(`Status update failed: ${err}`));
+    // The lobby's camera and mic switches don't always stick; the bot shows no picture and makes no sound.
+    for (const name of [/turn off camera/i, /turn off microphone/i]) {
+      const button = page.getByRole("button", { name }).first();
+      if (await button.isVisible().catch(() => false)) await button.click({ timeout: 2_000 }).catch(() => {});
+    }
     await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
     await enableCaptions(page, log).catch((err) => log(`Could not turn on captions: ${err}`));
     const title = await meetingTitle(page);
@@ -273,6 +330,7 @@ async function joinFromLobby(
   admitTimeoutMs: number,
   log: (m: string) => void,
   onWaitingRoom?: () => PromiseLike<unknown> | void,
+  giveWay?: () => Promise<boolean>,
 ) {
   const blocked = page.getByText(BLOCKED_TEXT);
 
@@ -312,6 +370,7 @@ async function joinFromLobby(
   const deadline = Date.now() + admitTimeoutMs;
   let outcome: "joined" | "denied" | "blocked" | "timeout" = "timeout";
   let inCallChecks = 0;
+  let checks = 0;
   while (Date.now() < deadline) {
     if (await denied.first().isVisible().catch(() => false)) {
       outcome = "denied";
@@ -330,6 +389,9 @@ async function joinFromLobby(
       break;
     }
     if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
+    if (giveWay && ++checks % 10 === 0 && (await giveWay().catch(() => false))) {
+      throw new JoinFailed("Stopped waiting to be let in: a call you sent the bot to needed it", "timeout");
+    }
     await sleep(1_000);
   }
 
@@ -389,9 +451,20 @@ async function participants(page: Page): Promise<string[] | null> {
 }
 
 /** Turns on Meet's captions so the bot can see who is speaking. */
+/** Closes Meet's tips and notices ("Got it", "Dismiss"), which can cover the captions button. */
+async function dismissPopups(page: Page) {
+  const buttons = page.getByRole("button", { name: /^(got it|dismiss|close|ok|no thanks|not now)$/i });
+  for (let i = 0; i < 5; i++) {
+    const button = buttons.first();
+    if (!(await button.isVisible().catch(() => false))) return;
+    await button.click({ timeout: 2_000 }).catch(() => {});
+  }
+}
+
 async function enableCaptions(page: Page, log: (m: string) => void) {
   // The watcher polls for the captions area itself, so it's safe to start before captions show up.
   await page.evaluate(installCaptionWatcher);
+  await dismissPopups(page);
 
   // Each way of turning captions on is a toggle, so only try the next one once captions are
   // clearly still off. Meet can take several seconds to turn them on.
@@ -482,7 +555,7 @@ type EndOptions = {
   log: (m: string) => void;
 };
 
-const CAPTION_RETRY_MS = 60_000;
+const CAPTION_RETRY_MS = 15_000;
 
 async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGoneMs, seen, log }: EndOptions) {
   const inCall = page.getByRole("button", { name: /leave call/i });
@@ -503,8 +576,11 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
     people?.forEach((p) => seen.add(p.trim()));
 
     // Captions sometimes don't take right after joining; keep trying while the call runs.
-    if (Date.now() >= nextCaptionTry && (await captionsState(page)) === "off") {
+    if (Date.now() >= nextCaptionTry && (await captionsState(page)) !== "on") {
       nextCaptionTry = Date.now() + CAPTION_RETRY_MS;
+      await dismissPopups(page);
+      // Meet hides its toolbar after a while; moving the mouse brings it back.
+      await page.mouse.move(640, 600).catch(() => {});
       await page.getByRole("button", { name: /turn on captions/i }).first().click({ timeout: 3_000 }).catch(() => {});
       log(`Retried captions: ${await waitForCaptions(page, 10_000)}`);
     }
