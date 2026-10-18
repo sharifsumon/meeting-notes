@@ -28,7 +28,10 @@ const SCHEMA = {
   },
 };
 
-type GeminiResponse = { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+type GeminiResponse = { candidates?: { finishReason?: string; content?: { parts?: { text?: string }[] } }[] };
+
+// Pieces shorter than this aren't split again when Gemini can't finish them.
+const MIN_SPLIT_S = 120;
 
 /** Gemini transcribes Bangla and calls that switch between Bangla and English. */
 export function gemini(apiKey: string, model = "gemini-3.8-flash") {
@@ -55,8 +58,31 @@ export function gemini(apiKey: string, model = "gemini-3.8-flash") {
       }
       if (!res.ok) throw new Error(`Gemini returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const body = (await res.json()) as GeminiResponse;
-      const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-      return geminiSegments(text, offsetMs);
+      const candidate = body.candidates?.[0];
+      const text = candidate?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      try {
+        return geminiSegments(text, offsetMs);
+      } catch {
+        throw new Error(`Gemini's reply couldn't be read (finish reason ${candidate?.finishReason ?? "none"}, ${text.length} characters)`);
+      }
+    }
+  }
+
+  /** Transcribes a piece; one Gemini can't finish (a busy stretch, an empty reply) is retried as two halves. */
+  async function transcribePiece(ogg: Buffer, offsetMs: number, seconds: number): Promise<WhisperSegment[]> {
+    try {
+      return await transcribeChunk(ogg, offsetMs);
+    } catch (err) {
+      // The last piece of a call is usually shorter than CHUNK_S.
+      const length = Math.min(seconds, await durationS(ogg));
+      if (length / 2 < MIN_SPLIT_S || !String(err).includes("couldn't be read")) throw err;
+      console.log(`[gemini] ${err}; retrying ${Math.round(length)}s from ${offsetMs / 1000}s as two halves`);
+      const half = Math.ceil(length / 2);
+      const lines: WhisperSegment[] = [];
+      for (const [i, part] of (await oggChunks(ogg, half)).entries()) {
+        lines.push(...(await transcribePiece(part, offsetMs + i * half * 1000, half)));
+      }
+      return lines;
     }
   }
 
@@ -65,7 +91,7 @@ export function gemini(apiKey: string, model = "gemini-3.8-flash") {
     async transcribe(audio: Buffer): Promise<WhisperSegment[]> {
       const chunks = await oggChunks(audio, CHUNK_S);
       const lines: WhisperSegment[] = [];
-      for (const [i, chunk] of chunks.entries()) lines.push(...(await transcribeChunk(chunk, i * CHUNK_S * 1000)));
+      for (const [i, chunk] of chunks.entries()) lines.push(...(await transcribePiece(chunk, i * CHUNK_S * 1000, CHUNK_S)));
       // Gemini's timestamps sometimes step backwards.
       return lines.sort((a, b) => a.startMs - b.startMs);
     },
@@ -95,6 +121,19 @@ function parseCutOff(json: string): unknown {
     const lastItem = json.lastIndexOf("}");
     if (!json.trimStart().startsWith("[") || lastItem < 0) throw err;
     return JSON.parse(`${json.slice(0, lastItem + 1)}]`);
+  }
+}
+
+/** How long an Ogg piece plays, in seconds. */
+async function durationS(ogg: Buffer): Promise<number> {
+  const dir = await mkdtemp(path.join(tmpdir(), "mf-len-"));
+  try {
+    const file = path.join(dir, "piece.ogg");
+    await writeFile(file, ogg);
+    const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
+    return Number(stdout.trim()) || 0;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
