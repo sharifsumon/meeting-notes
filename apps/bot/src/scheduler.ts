@@ -1,9 +1,10 @@
 import { botSessions, meetings, users } from "@minuteflow/db";
-import { and, eq, gt, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 import { meetCode } from "./meet/links";
 import { joinQueue } from "./queue";
+import { type RecordedSession, sharedSessionFor } from "./shared";
 
 // A bot for the same link within this window counts as the same call.
 const RECENT_MS = 6 * 60 * 60 * 1000;
@@ -82,10 +83,54 @@ export async function scheduleDueMeetings(now = new Date()) {
       .onConflictDoNothing({ target: botSessions.meetingId })
       .returning({ id: botSessions.id });
     if (!session) continue; // another scheduler got there first
+    // A bot of its own replaces a recording shared from someone else's (one that never got in).
+    await db.update(meetings).set({ sharedSessionId: null }).where(eq(meetings.id, m.id));
     await joinQueue.add("join", { botSessionId: session.id, meetingId: m.id }, { jobId: session.id, attempts: 1 });
     console.log(`Scheduled bot ${session.id} for meeting ${m.id}`);
   }
   return due.length;
+}
+
+// How far back meetings are matched to someone else's recording.
+const SHARE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * When a call is on several MinuteFlow users' calendars, only one bot joins. Everyone else's copy
+ * of the meeting is pointed at that bot's recording, so they see its status, transcript and notes.
+ */
+export async function linkSharedMeetings(now = new Date()) {
+  const since = new Date(now.getTime() - SHARE_LOOKBACK_MS);
+  const own = db.select({ id: botSessions.meetingId }).from(botSessions);
+  const unlinked = await db
+    .select({ id: meetings.id, url: meetings.meetingUrl, startsAt: meetings.startsAt, endsAt: meetings.endsAt })
+    .from(meetings)
+    .where(
+      and(
+        eq(meetings.platform, "google_meet"),
+        eq(meetings.cancelled, false),
+        isNull(meetings.deletedAt),
+        isNull(meetings.sharedSessionId),
+        lte(meetings.startsAt, now),
+        gt(meetings.endsAt, since),
+        notInArray(meetings.id, own),
+      ),
+    );
+  if (!unlinked.length) return;
+
+  const sessions = (
+    await db
+      .select({ id: botSessions.id, url: meetings.meetingUrl, joinedAt: botSessions.joinedAt, leftAt: botSessions.leftAt })
+      .from(botSessions)
+      .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
+      .where(and(isNotNull(botSessions.joinedAt), gt(botSessions.createdAt, new Date(since.getTime() - RECENT_MS))))
+  ).filter((s): s is RecordedSession => s.joinedAt !== null);
+
+  for (const m of unlinked) {
+    const shared = sharedSessionFor(m, sessions, now);
+    if (!shared) continue;
+    await db.update(meetings).set({ sharedSessionId: shared }).where(eq(meetings.id, m.id));
+    console.log(`Meeting ${m.id} shares bot ${shared}'s recording`);
+  }
 }
 
 /**

@@ -3,12 +3,13 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { botSessions, meetings } from "@minuteflow/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { auth } from "@/auth";
 import { env } from "@/env";
 import { db } from "@/lib/db";
+import { sessionOf } from "@/lib/meetings";
 
-/** Streams a bot session's recording to its owner. Supports Range so the player can seek. */
+/** Streams a bot session's recording to anyone whose meeting it recorded. Supports Range so the player can seek. */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   const userId = session?.user?.id;
@@ -17,11 +18,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
 
+  // The bot's own meeting, or this user's copy of a call another user's bot recorded.
   const [row] = await db()
     .select({ key: botSessions.recordingKey, title: meetings.title })
     .from(botSessions)
-    .innerJoin(meetings, eq(botSessions.meetingId, meetings.id))
-    .where(and(eq(botSessions.id, id), eq(meetings.userId, userId)))
+    .innerJoin(meetings, sessionOf())
+    .where(and(eq(botSessions.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .limit(1);
   if (!row?.key) return new Response("Not found", { status: 404 });
 

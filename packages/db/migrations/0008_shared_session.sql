@@ -1,0 +1,2 @@
+ALTER TABLE "meetings" ADD COLUMN "shared_session_id" uuid;--> statement-breakpoint
+ALTER TABLE "meetings" ADD CONSTRAINT "meetings_shared_session_id_bot_sessions_id_fk" FOREIGN KEY ("shared_session_id") REFERENCES "public"."bot_sessions"("id") ON DELETE set null ON UPDATE no action;

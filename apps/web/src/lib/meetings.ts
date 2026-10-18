@@ -64,13 +64,21 @@ function toRow(r: {
   };
 }
 
+/**
+ * Joins a meeting to its bot session: its own, or the one shared from another MinuteFlow user who
+ * had the same call on their calendar. A meeting never has both.
+ */
+export function sessionOf(): SQL {
+  return or(eq(botSessions.meetingId, meetings.id), eq(botSessions.id, meetings.sharedSessionId))!;
+}
+
 function base() {
   return db()
     .select(columns)
     .from(meetings)
     .leftJoin(calendars, eq(meetings.calendarId, calendars.id))
-    .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id))
-    .leftJoin(notes, eq(notes.meetingId, meetings.id));
+    .leftJoin(botSessions, sessionOf())
+    .leftJoin(notes, eq(notes.meetingId, botSessions.meetingId));
 }
 
 /** Meetings that haven't ended yet, soonest first. */

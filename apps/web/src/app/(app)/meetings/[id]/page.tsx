@@ -1,10 +1,11 @@
-import { botSessions, calendars, meetings, notes, transcripts } from "@minuteflow/db";
+import { botSessions, calendars, meetings, notes, transcripts, users } from "@minuteflow/db";
 import { and, eq, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { LocalTime } from "@/components/local-time";
 import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui";
 import { db } from "@/lib/db";
+import { sessionOf } from "@/lib/meetings";
 import { requireUserId } from "@/lib/session";
 import { RecordSwitch } from "../record-switch";
 import { DeleteMeetingButton } from "../delete-meeting";
@@ -44,13 +45,23 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
     .select({ meeting: meetings, calendarName: calendars.name, bot: botSessions })
     .from(meetings)
     .leftJoin(calendars, eq(meetings.calendarId, calendars.id))
-    .leftJoin(botSessions, eq(botSessions.meetingId, meetings.id))
+    .leftJoin(botSessions, sessionOf())
     .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .limit(1);
   if (!row) notFound();
   const { meeting: m, bot } = row;
+  // Another MinuteFlow user's bot recorded this call; name whose, since it isn't this user's bot.
+  const shared = Boolean(bot && bot.meetingId !== m.id);
+  const [recordedFor] = shared && bot
+    ? await db()
+        .select({ name: users.name })
+        .from(meetings)
+        .innerJoin(users, eq(users.id, meetings.userId))
+        .where(eq(meetings.id, bot.meetingId))
+        .limit(1)
+    : [];
 
-  const [note] = await db().select().from(notes).where(eq(notes.meetingId, m.id)).limit(1);
+  const [note] = bot ? await db().select().from(notes).where(eq(notes.meetingId, bot.meetingId)).limit(1) : [];
   const [transcript] = bot
     ? await db().select().from(transcripts).where(eq(transcripts.botSessionId, bot.id)).limit(1)
     : [];
@@ -77,6 +88,11 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
               <span className="pill border border-accent-soft bg-sky-50 font-medium text-accent">
                 {row.calendarName ?? "Sent from a link"}
               </span>
+              {shared && (
+                <span className="pill border border-line bg-page font-medium text-ink-3">
+                  Recorded by {recordedFor?.name ?? "another MinuteFlow user"}&apos;s notetaker
+                </span>
+              )}
             </div>
             <h1 className="text-[28px] font-extrabold tracking-[-0.02em] break-words">{m.title}</h1>
             <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-ink-3">
@@ -111,7 +127,8 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
                 Download audio
               </a>
             )}
-            {!(bot && ["joining", "waiting_room", "recording"].includes(bot.status)) && (
+            {/* Deleting a shared meeting only removes this user's copy, so it's never blocked by the bot. */}
+            {(shared || !(bot && ["joining", "waiting_room", "recording"].includes(bot.status))) && (
               <DeleteMeetingButton meetingId={m.id} title={m.title} redirectTo="/meetings" />
             )}
           </div>

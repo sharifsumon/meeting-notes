@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { cp, rm } from "node:fs/promises";
+import path from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { config, headless } from "../config";
 import { installAudioCapture, installCaptionWatcher } from "./capture";
@@ -49,21 +52,53 @@ const BROWSER_ARGS = [
   "--no-first-run",
   "--no-default-browser-check",
   "--lang=en-US",
+  // Several bots share one virtual screen; a window behind another must keep running at full speed.
+  "--disable-backgrounding-occluded-windows",
+  "--disable-renderer-backgrounding",
+  "--disable-background-timer-throttling",
 ];
 
+// Chrome locks a profile to one browser, so only one bot at a time uses the signed-in profile itself.
+let profileInUse = false;
+
+// Caches and Chrome's lock files aren't needed to stay signed in.
+const SKIP_IN_COPY = /^(Singleton\w*|Cache|Code Cache|GPUCache|GrShaderCache|ShaderCache|DawnCache|Crashpad|component_crx_cache)$/;
+
+/** Copies the signed-in profile for a bot that runs while another bot holds the original. */
+export async function copyProfile(from: string, to: string) {
+  await cp(from, to, { recursive: true, filter: (src) => !SKIP_IN_COPY.test(path.basename(src)) });
+}
+
 /**
- * Opens a browser context: the signed-in bot profile when BOT_PROFILE_DIR is set
- * (one meeting at a time, since a profile can't be shared), otherwise a fresh guest.
+ * Opens a browser context: the signed-in bot profile when BOT_PROFILE_DIR is set, otherwise a fresh
+ * guest. A bot that starts while another holds the profile signs in from a copy of it, deleted when
+ * its browser closes; the original stays the one Google keeps refreshing.
  */
 export async function launchContext(): Promise<BrowserContext> {
   const options = { permissions: ["microphone", "camera"], locale: "en-US" };
   if (config.BOT_PROFILE_DIR) {
-    return chromium.launchPersistentContext(config.BOT_PROFILE_DIR, {
-      ...options,
-      executablePath: config.CHROME_PATH,
-      headless,
-      args: BROWSER_ARGS,
-    });
+    const original = !profileInUse;
+    profileInUse ||= original;
+    const dir = original ? config.BOT_PROFILE_DIR : `${config.BOT_PROFILE_DIR}-copies/${randomUUID()}`;
+    const release = async () => {
+      if (original) profileInUse = false;
+      // Chrome can still be writing to the copy as it exits.
+      else await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 }).catch(() => {});
+    };
+    try {
+      if (!original) await copyProfile(config.BOT_PROFILE_DIR, dir);
+      const context = await chromium.launchPersistentContext(dir, {
+        ...options,
+        executablePath: config.CHROME_PATH,
+        headless,
+        args: BROWSER_ARGS,
+      });
+      context.on("close", () => void release());
+      return context;
+    } catch (err) {
+      await release();
+      throw err;
+    }
   }
   const browser = await chromium.launch({ executablePath: config.CHROME_PATH, headless, args: BROWSER_ARGS });
   const context = await browser.newContext(options);

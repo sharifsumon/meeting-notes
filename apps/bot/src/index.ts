@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { config } from "./config";
 import { JOIN_QUEUE, redisConnection, type JoinJob } from "./queue";
-import { removeDeletedJobs, scheduleDueMeetings } from "./scheduler";
+import { linkSharedMeetings, removeDeletedJobs, scheduleDueMeetings } from "./scheduler";
 import { summarizePending, summarizer } from "./summarize";
 import { transcribePending, transcriptionProvider } from "./transcribe";
 import { closeAllBrowsers } from "./meet/join";
@@ -23,6 +23,7 @@ async function tick() {
   try {
     await scheduleDueMeetings();
     await removeDeletedJobs();
+    await linkSharedMeetings();
   } catch (err) {
     console.error("Scheduler failed:", err);
   }

@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -139,6 +140,9 @@ export const meetings = pgTable(
     botRequestedAt: timestamp("bot_requested_at", { withTimezone: true }),
     // Set when the user deletes a calendar meeting. The row stays so calendar sync doesn't bring it back.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // Another MinuteFlow user's bot recorded this call (it was on both calendars), so this meeting
+    // shows that recording, transcript and notes instead of sending a second bot.
+    sharedSessionId: uuid("shared_session_id").references((): AnyPgColumn => botSessions.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
