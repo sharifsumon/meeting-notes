@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/auth";
+import { LegalLinks } from "@/components/legal-page";
 import { Icon, Logo } from "@/components/ui";
 
 const POINTS = [
@@ -38,7 +40,7 @@ export default async function Home() {
             ))}
           </ul>
         </div>
-        <p className="text-[13px] text-muted">© {new Date().getFullYear()} MinuteFlow</p>
+        <LegalLinks />
       </section>
       <section className="flex flex-[1_1_480px] items-center justify-center px-6 py-12">
         <div className="card flex w-full max-w-[420px] flex-col gap-6 rounded-2xl p-9 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.06)]">
@@ -63,7 +65,11 @@ export default async function Home() {
             </button>
           </form>
           <p className="text-[13px] leading-relaxed text-muted">
-            We ask for read-only access to your calendar so we can see which meetings to join.
+            We ask for read-only access to your calendar so we can see which meetings to join. See our{" "}
+            <Link href="/privacy" className="text-accent underline">
+              privacy policy
+            </Link>
+            .
           </p>
         </div>
       </section>
