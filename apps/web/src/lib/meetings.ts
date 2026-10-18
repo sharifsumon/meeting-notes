@@ -1,7 +1,7 @@
 import "server-only";
 import { botSessions, calendars, meetings, notes } from "@minuteflow/db";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, type SQL } from "drizzle-orm";
-import type { BotStatus } from "@/components/ui";
+import { wasNotLetIn, type BotStatus } from "@/components/ui";
 import { db } from "@/lib/db";
 import { meetCode, type MeetingPlatform } from "@/lib/meeting-links";
 
@@ -17,6 +17,8 @@ export type MeetingRow = {
   calendarName: string;
   status: BotStatus | null;
   hasNotes: boolean;
+  /** The bot failed because nobody let it into the call. */
+  notLetIn: boolean;
 };
 
 const columns = {
@@ -29,6 +31,7 @@ const columns = {
   recordEnabled: meetings.recordEnabled,
   calendarName: calendars.name,
   status: botSessions.status,
+  error: botSessions.error,
   noteId: notes.id,
 };
 
@@ -52,12 +55,14 @@ function toRow(r: {
   recordEnabled: boolean;
   calendarName: string | null;
   status: BotStatus | null;
+  error: string | null;
   noteId: string | null;
 }): MeetingRow {
-  const { noteId, ...rest } = r;
+  const { noteId, error, ...rest } = r;
   return {
     ...rest,
     hasNotes: noteId !== null,
+    notLetIn: r.status === "failed" && wasNotLetIn(error),
     calendarName: r.calendarName ?? "Sent from a link",
     startsAt: r.startsAt.toISOString(),
     endsAt: r.endsAt.toISOString(),

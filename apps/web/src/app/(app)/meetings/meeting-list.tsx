@@ -96,7 +96,7 @@ function MeetingCard({ meeting: m }: { meeting: MeetingRow }) {
         </div>
         <div className="flex flex-wrap gap-1.5">
           <span className="pill border border-accent-soft bg-sky-50 font-medium text-accent">{m.calendarName}</span>
-          <StatusPill status={m.status} recordEnabled={m.recordEnabled && !ended} hasNotes={m.hasNotes} />
+          <StatusPill status={m.status} recordEnabled={m.recordEnabled && !ended} hasNotes={m.hasNotes} notLetIn={m.notLetIn} />
           {m.platform && !supported && <span className="pill bg-slate-100 font-medium text-muted">Bot coming soon</span>}
         </div>
       </div>

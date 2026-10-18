@@ -205,7 +205,7 @@ function Selected({ m, now }: { m: MeetingRow; now: Date }) {
         <span className="size-2.5 rounded-[3px]" style={{ background: platform?.dot ?? "#94a3b8" }} />
         {platform?.label ?? "No video link"}
         <span className="ml-auto">
-          <StatusPill status={m.status} recordEnabled={m.recordEnabled && !ended} hasNotes={m.hasNotes} />
+          <StatusPill status={m.status} recordEnabled={m.recordEnabled && !ended} hasNotes={m.hasNotes} notLetIn={m.notLetIn} />
         </span>
       </div>
       <h2 className="text-xl font-extrabold tracking-[-0.01em] break-words">{m.title}</h2>

@@ -32,17 +32,28 @@ const STATUS: Record<BotStatus, { label: string; className: string }> = {
   cancelled: { label: "Skipped", className: "bg-slate-100 text-slate-600" },
 };
 
+// Errors the bot records when the call didn't let it in (as opposed to a technical failure).
+const NOT_LET_IN = ["Not admitted", "The host didn't let the bot in", "Stopped waiting to be let in", "Google Meet refused to let the bot in"];
+
+/** Whether a failed bot session failed because nobody admitted the bot. */
+export function wasNotLetIn(error: string | null | undefined) {
+  return Boolean(error && NOT_LET_IN.some((start) => error.startsWith(start)));
+}
+
 /** The pill shown on a meeting: the bot's progress if it has one, otherwise whether recording is planned. */
 export function StatusPill({
   status,
   recordEnabled,
   hasNotes = false,
+  notLetIn = false,
 }: {
   status: BotStatus | null;
   recordEnabled: boolean;
   hasNotes?: boolean;
+  notLetIn?: boolean;
 }) {
   if (status === "completed" && hasNotes) return <span className="pill bg-green-100 text-green-800">Notes ready</span>;
+  if (status === "failed" && notLetIn) return <span className="pill bg-amber-100 text-amber-800">Not allowed</span>;
   if (status) {
     const s = STATUS[status];
     return <span className={`pill ${s.className}`}>{s.label}</span>;

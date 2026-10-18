@@ -3,7 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { LocalTime } from "@/components/local-time";
-import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui";
+import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS, wasNotLetIn } from "@/components/ui";
 import { db } from "@/lib/db";
 import { sessionOf } from "@/lib/meetings";
 import { requireUserId } from "@/lib/session";
@@ -50,6 +50,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
     .limit(1);
   if (!row) notFound();
   const { meeting: m, bot } = row;
+  const notLetIn = bot?.status === "failed" && wasNotLetIn(bot.error);
   // Another MinuteFlow user's bot recorded this call; name whose, since it isn't this user's bot.
   const shared = Boolean(bot && bot.meetingId !== m.id);
   const [recordedFor] = shared && bot
@@ -84,7 +85,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill status={bot?.status ?? null} recordEnabled={m.recordEnabled && !ended} hasNotes={Boolean(note)} />
+              <StatusPill status={bot?.status ?? null} recordEnabled={m.recordEnabled && !ended} hasNotes={Boolean(note)} notLetIn={notLetIn} />
               <span className="pill border border-accent-soft bg-sky-50 font-medium text-accent">
                 {row.calendarName ?? "Sent from a link"}
               </span>
@@ -158,7 +159,9 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             <section className="card flex flex-col gap-3.5 p-5">
               <h2 className="text-[15px] font-bold">Meeting audio</h2>
               <p className="text-sm leading-relaxed text-muted">
-                {bot?.status === "failed"
+                {notLetIn
+                  ? "The bot wasn't let into this call."
+                  : bot?.status === "failed"
                   ? "The bot couldn't record this call."
                   : ended
                     ? "This call wasn't recorded."
@@ -174,7 +177,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
               <dt className="text-muted">Calendar</dt>
               <dd>{row.calendarName ?? "Sent from a link"}</dd>
               <dt className="text-muted">Notetaker</dt>
-              <dd>{bot ? BOT_LABEL[bot.status] : m.recordEnabled && !ended ? "Will join at the start" : "Off"}</dd>
+              <dd>{notLetIn ? "Not allowed in" : bot ? BOT_LABEL[bot.status] : m.recordEnabled && !ended ? "Will join at the start" : "Off"}</dd>
               {transcript?.language && (
                 <>
                   <dt className="text-muted">Language</dt>
