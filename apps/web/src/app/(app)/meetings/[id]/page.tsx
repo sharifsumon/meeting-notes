@@ -148,7 +148,6 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             keyPoints={note?.keyPoints ?? []}
             actionItems={note?.actionItems ?? []}
             minutes={note?.minutes ?? undefined}
-            translations={note?.translations ?? {}}
             segments={transcript?.segments ?? []}
             recorded={hasRecording}
             transcribed={!!transcript}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ActionItem, Minutes, MinutesPoint, NoteContent, TranscriptSegment } from "@minuteflow/db";
+import type { ActionItem, Minutes, MinutesPoint, TranscriptSegment } from "@minuteflow/db";
 import { Icon } from "@/components/ui";
 import { seekAudio } from "./audio-player";
 
@@ -12,8 +12,6 @@ type Props = {
   actionItems: ActionItem[];
   /** Missing on notes written before minutes existed. */
   minutes?: Minutes;
-  /** The notes in other languages; Bangla calls have "bn". */
-  translations: Record<string, NoteContent>;
   segments: TranscriptSegment[];
   recorded: boolean;
   /** A transcript was saved, even if it has no lines. */
@@ -35,12 +33,10 @@ function clock(ms: number) {
   return s >= 3600 ? `${Math.floor(s / 3600)}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function NotesTabs({ translations, segments, recorded, transcribed, ...english }: Props) {
+// Notes always show in English; Bangla copies saved on older calls aren't offered.
+export function NotesTabs({ segments, recorded, transcribed, summary, decisions, keyPoints, actionItems, minutes }: Props) {
   const [tab, setTab] = useState<"summary" | "transcript" | "actions">("summary");
   const [query, setQuery] = useState("");
-  const [lang, setLang] = useState<"en" | "bn">("en");
-  const bangla = translations.bn;
-  const { summary, decisions, keyPoints, actionItems, minutes } = lang === "bn" && bangla ? bangla : english;
 
   const tabs = [
     { id: "summary", label: "Summary" },
@@ -86,30 +82,6 @@ export function NotesTabs({ translations, segments, recorded, transcribed, ...en
             );
           })}
         </div>
-        {bangla && tab !== "transcript" && (
-          <div
-            role="group"
-            aria-label="Notes language"
-            className="mb-1.5 flex rounded-[10px] border border-line bg-white p-0.5 text-sm"
-          >
-            {(
-              [
-                ["en", "English"],
-                ["bn", "বাংলা"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={lang === id}
-                onClick={() => setLang(id)}
-                className={`min-h-9 rounded-lg px-3 font-semibold ${lang === id ? "bg-accent text-white" : "text-ink-3 hover:text-ink"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {tab === "summary" && (
