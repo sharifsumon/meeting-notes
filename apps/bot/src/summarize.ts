@@ -292,9 +292,10 @@ export async function summarizePending(provider: Summarizer) {
       log(`Summarizing ${s.segments.length} segments with ${provider.name}`);
       // Sessions recorded before the bot left itself out list it as a participant.
       const participants = dedupeNames(s.participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME])));
-      // Every call gets notes in English and in Bangla.
+      // Notes are in English, with a Bangla copy when NOTES_BANGLA is on.
       const result = await provider.summarize({ title: s.title, segments: s.segments, participants, language: "English" });
-      const translations: Record<string, MeetingNotes> = { bn: await provider.translate(result, "Bangla (বাংলা)") };
+      const translations: Record<string, MeetingNotes> =
+        config.NOTES_BANGLA === "true" ? { bn: await provider.translate(result, "Bangla (বাংলা)") } : {};
       await db
         .insert(notes)
         .values({ meetingId: s.meetingId, ...result, minutes: result.minutes ?? null, translations })

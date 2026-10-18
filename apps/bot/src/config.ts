@@ -24,6 +24,8 @@ const schema = z.object({
   // Writes AI notes (summary, decisions, action items) when set.
   GROQ_API_KEY: z.string().min(1).optional(),
   GROQ_MODEL: z.string().min(1).optional(),
+  // "true" also writes a Bangla copy of every call's notes.
+  NOTES_BANGLA: z.enum(["true", "false"]).default("false"),
   // Who transcribes calls that aren't clearly English (Bangla, or Bangla mixed with English).
   // deepgram: Deepgram's Bangla model. whisper: Groq's Whisper. gemini: Gemini (needs GEMINI_API_KEY).
   TRANSCRIBE_BANGLA_PROVIDER: z.enum(["deepgram", "whisper", "gemini"]).default("deepgram"),
