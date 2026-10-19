@@ -251,10 +251,70 @@ export function groq(apiKey: string, model: string): Summarizer {
   };
 }
 
+/** Gemini reads a whole call's transcript at once, so long calls need no chunking or merging. */
+export function geminiNotes(apiKey: string, model: string): Summarizer {
+  async function complete(system: string, user: string): Promise<string> {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: user }] }],
+          generationConfig: { temperature: 0.2, responseMimeType: "application/json", maxOutputTokens: 65_536 },
+        }),
+        signal: AbortSignal.timeout(5 * 60_000),
+      });
+      if ((res.status === 429 || res.status >= 500) && attempt < 5) {
+        await new Promise((r) => setTimeout(r, Math.min(2 ** attempt * 5_000, 120_000)));
+        continue;
+      }
+      if (!res.ok) throw new Error(`Gemini returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const content = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
+      if (!content) throw new Error("Gemini returned no content");
+      return content;
+    }
+  }
+
+  return {
+    name: `Gemini (${model})`,
+    async summarize({ title, segments, participants = [], language }) {
+      const header = participants.length ? `Meeting: ${title}\nPeople in the call: ${participants.join(", ")}` : `Meeting: ${title}`;
+      const writeIn = language ? `Write the notes in ${language}, whatever languages the meeting used.` : "Use the language of the meeting.";
+      const transcript = transcriptChunks(segments, Number.POSITIVE_INFINITY).join("");
+      const raw = await complete(
+        `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}\n${writeIn}`,
+        `${header}\n\nTranscript:\n${transcript}`,
+      );
+      return withAttendees(parseNotes(raw), participants, segments);
+    },
+    async translate(notes, language) {
+      const { summary, keyPoints, decisions, actionItems, minutes } = notes;
+      return parseNotes(
+        await complete(
+          `You translate meeting notes into ${language}. Keep people's names, product names and technical terms as they are. ${NOTES_SHAPE}`,
+          JSON.stringify({
+            summary,
+            keyPoints,
+            decisions,
+            actionItems: actionItems.map(({ text, owner, dueDate }) => ({ text, owner, due: dueDate })),
+            minutes,
+          }),
+        ),
+      );
+    },
+  };
+}
+
 export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
 
-/** The configured summarizer, or null when no key is set. */
+/** The configured summarizer, or null when its key isn't set. */
 export function summarizer(): Summarizer | null {
+  if (config.NOTES_PROVIDER === "gemini") {
+    if (config.GEMINI_API_KEY) return geminiNotes(config.GEMINI_API_KEY, config.GEMINI_MODEL);
+    console.error("[summarize] NOTES_PROVIDER=gemini needs GEMINI_API_KEY; using Groq");
+  }
   return config.GROQ_API_KEY ? groq(config.GROQ_API_KEY, config.GROQ_MODEL ?? DEFAULT_GROQ_MODEL) : null;
 }
 

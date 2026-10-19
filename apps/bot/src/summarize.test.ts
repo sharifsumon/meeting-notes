@@ -93,6 +93,32 @@ describe("summaries", () => {
     expect(system(0)).toContain("Write the notes in English");
     expect(system(1)).toContain("translate meeting notes into Bangla");
   });
+
+  it("writes a long call's notes with Gemini in one request", async () => {
+    const { geminiNotes } = await import("./summarize");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("busy", { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: "Ship it." }) }] } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      // About 20k tokens, which Groq would split into several parts.
+      const segments = Array.from({ length: 400 }, (_, i) => seg(i * 1000, "Speaker 1", "word ".repeat(40)));
+      const pending = geminiNotes("key", "gemini-3.8-flash").summarize({ title: "Sync", segments, language: "English" });
+      await vi.runAllTimersAsync();
+      const notes = await pending;
+      expect(notes.summary).toBe("Ship it.");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [url, init] = fetchMock.mock.calls[1]!;
+      expect(String(url)).toContain("models/gemini-3.8-flash:generateContent");
+      const body = JSON.parse(init.body as string);
+      expect(body.systemInstruction.parts[0].text).toContain("Write the notes in English");
+      expect(body.contents[0].parts[0].text.match(/Speaker 1:/g)).toHaveLength(400);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("minutes", () => {

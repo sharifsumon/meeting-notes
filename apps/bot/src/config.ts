@@ -24,6 +24,8 @@ const schema = z.object({
   // Writes AI notes (summary, decisions, action items) when set.
   GROQ_API_KEY: z.string().min(1).optional(),
   GROQ_MODEL: z.string().min(1).optional(),
+  // Who writes the notes: groq (needs GROQ_API_KEY) or gemini (needs GEMINI_API_KEY).
+  NOTES_PROVIDER: z.enum(["groq", "gemini"]).default("groq"),
   // "true" also writes a Bangla copy of every call's notes.
   NOTES_BANGLA: z.enum(["true", "false"]).default("false"),
   // Who transcribes calls that aren't clearly English (Bangla, or Bangla mixed with English).
