@@ -71,6 +71,30 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             your calls, paste your key here. It&apos;s stored encrypted and never shown again.
           </p>
           <GeminiKeyForm saved={savedKeyEnd} />
+          <div className="w-full rounded-xl border border-line bg-slate-50 px-4 py-3 text-sm text-ink-2">
+            <p className="font-semibold">Tips</p>
+            <ol className="mt-1.5 list-decimal space-y-1 pl-5">
+              <li>
+                Open{" "}
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-accent underline underline-offset-4"
+                >
+                  Google AI Studio → API keys
+                </a>{" "}
+                and sign in with your Google account.
+              </li>
+              <li>Press &quot;Create API key&quot;, pick or create a project, then copy the key (it starts with AIza).</li>
+              <li>Paste it above and press Save key. MinuteFlow checks it with Google before saving.</li>
+              <li>
+                Free keys have a daily limit that busy days can use up. Turn on billing for the key&apos;s project in AI
+                Studio to avoid gaps; it costs a few cents per hour of meetings.
+              </li>
+              <li>Never share your key with anyone. You can delete it in AI Studio at any time and create a new one.</li>
+            </ol>
+          </div>
         </div>
       </section>
 
