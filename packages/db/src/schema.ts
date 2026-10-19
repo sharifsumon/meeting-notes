@@ -38,6 +38,8 @@ export const users = pgTable("users", {
   consentVersion: text("consent_version"),
   // Send the notetaker to every Google Meet event on the user's calendars.
   autoRecord: boolean("auto_record").notNull().default(true),
+  // The user's own Gemini API key, encrypted like OAuth tokens. Their calls use it instead of the server's.
+  geminiApiKey: text("gemini_api_key"),
   createdAt: createdAt(),
 });
 

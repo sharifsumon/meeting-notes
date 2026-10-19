@@ -3,6 +3,7 @@ import {
   meetings,
   notes,
   transcripts,
+  users,
   type ActionItem,
   type Minutes,
   type MinutesPoint,
@@ -13,6 +14,7 @@ import { and, eq, inArray, isNull, like, not, or, sql } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 import { dedupeNames, isBotName } from "./meet/names";
+import { ownGeminiKey } from "./user-keys";
 
 export type MeetingNotes = NoteContent;
 
@@ -309,10 +311,10 @@ export function geminiNotes(apiKey: string, model: string): Summarizer {
 
 export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
 
-/** The configured summarizer, or null when its key isn't set. */
-export function summarizer(): Summarizer | null {
+/** The configured summarizer, or null when its key isn't set. `geminiKey` replaces the server's Gemini key. */
+export function summarizer(geminiKey = config.GEMINI_API_KEY): Summarizer | null {
   if (config.NOTES_PROVIDER === "gemini") {
-    if (config.GEMINI_API_KEY) return geminiNotes(config.GEMINI_API_KEY, config.GEMINI_MODEL);
+    if (geminiKey) return geminiNotes(geminiKey, config.GEMINI_MODEL);
     console.error("[summarize] NOTES_PROVIDER=gemini needs GEMINI_API_KEY; using Groq");
   }
   return config.GROQ_API_KEY ? groq(config.GROQ_API_KEY, config.GROQ_MODEL ?? DEFAULT_GROQ_MODEL) : null;
@@ -323,7 +325,7 @@ const attempts = new Map<string, number>();
 const MAX_ATTEMPTS = 3;
 
 /** Writes notes for transcribed sessions that don't have them yet, then marks the session done. */
-export async function summarizePending(provider: Summarizer) {
+export async function summarizePending(writerFor: (geminiKey?: string) => Summarizer) {
   const pending = await db
     .select({
       sessionId: botSessions.id,
@@ -331,10 +333,12 @@ export async function summarizePending(provider: Summarizer) {
       title: meetings.title,
       participants: botSessions.participants,
       segments: transcripts.segments,
+      geminiKey: users.geminiApiKey,
     })
     .from(botSessions)
     .innerJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
+    .innerJoin(users, eq(users.id, meetings.userId))
     .leftJoin(notes, eq(notes.meetingId, meetings.id))
     .where(
       and(
@@ -349,6 +353,7 @@ export async function summarizePending(provider: Summarizer) {
   for (const s of pending) {
     const log = (msg: string) => console.log(`[summarize ${s.sessionId}] ${msg}`);
     try {
+      const provider = writerFor(ownGeminiKey(s.geminiKey));
       log(`Summarizing ${s.segments.length} segments with ${provider.name}`);
       // Sessions recorded before the bot left itself out list it as a participant.
       const participants = dedupeNames(s.participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME])));

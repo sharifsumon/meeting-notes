@@ -32,6 +32,8 @@ const schema = z.object({
   // deepgram: Deepgram's Bangla model. whisper: Groq's Whisper. gemini: Gemini (needs GEMINI_API_KEY).
   TRANSCRIBE_BANGLA_PROVIDER: z.enum(["deepgram", "whisper", "gemini"]).default("deepgram"),
   GEMINI_API_KEY: z.string().min(1).optional(),
+  // Shared with the web app; decrypts the Gemini keys users save in Settings.
+  TOKEN_ENCRYPTION_KEY: z.string().min(1).optional(),
   GEMINI_MODEL: z.string().min(1).default("gemini-3.8-flash"),
   GROQ_WHISPER_MODEL: z.string().min(1).default("whisper-large-v3"),
 });

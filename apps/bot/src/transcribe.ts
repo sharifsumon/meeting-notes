@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { botSessions, transcripts, type SpeakerTurn, type TranscriptSegment } from "@minuteflow/db";
+import { botSessions, meetings, transcripts, users, type SpeakerTurn, type TranscriptSegment } from "@minuteflow/db";
 import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
 import { fullName, isBotName } from "./meet/names";
 import { gemini } from "./gemini";
+import { ownGeminiKey } from "./user-keys";
 import { assignSpeakers, groqWhisper, scriptLanguage, type WhisperSegment } from "./whisper";
 
 /** Turns a recording into speaker-labelled segments. Swap the implementation to change services. */
@@ -195,21 +196,24 @@ export function nameTranscript(segments: TranscriptSegment[], timeline: SpeakerT
   return nameOnlySpeaker(nameSpeakers(segments, timeline), people).map((seg) => ({ ...seg, speaker: fullName(seg.speaker, people) }));
 }
 
-/** The configured provider, or null when no transcription key is set. */
-export function transcriptionProvider(): TranscriptionProvider | null {
+/** The configured provider, or null when no transcription key is set. `geminiKey` replaces the server's Gemini key. */
+export function transcriptionProvider(geminiKey?: string): TranscriptionProvider | null {
   if (!config.DEEPGRAM_API_KEY) return null;
   const extra = config.TRANSCRIBE_EXTRA_LANGUAGES.split(",").map((l) => l.trim()).filter(Boolean);
-  return deepgram(config.DEEPGRAM_API_KEY, extra, banglaTranscriber(config.TRANSCRIBE_BANGLA_PROVIDER));
+  return deepgram(config.DEEPGRAM_API_KEY, extra, banglaTranscriber(config.TRANSCRIBE_BANGLA_PROVIDER, geminiKey));
 }
 
 /** The transcriber for calls that aren't clearly English; undefined means Deepgram's own Bangla. */
-export function banglaTranscriber(choice: "deepgram" | "whisper" | "gemini"): LineTranscriber | undefined {
+export function banglaTranscriber(
+  choice: "deepgram" | "whisper" | "gemini",
+  geminiKey = config.GEMINI_API_KEY,
+): LineTranscriber | undefined {
   if (choice === "whisper") {
     if (config.GROQ_API_KEY) return groqWhisper(config.GROQ_API_KEY, config.GROQ_WHISPER_MODEL);
     console.error("[transcribe] TRANSCRIBE_BANGLA_PROVIDER=whisper needs GROQ_API_KEY; using Deepgram");
   }
   if (choice === "gemini") {
-    if (config.GEMINI_API_KEY) return gemini(config.GEMINI_API_KEY, config.GEMINI_MODEL);
+    if (geminiKey) return gemini(geminiKey, config.GEMINI_MODEL);
     console.error("[transcribe] TRANSCRIBE_BANGLA_PROVIDER=gemini needs GEMINI_API_KEY; using Deepgram");
   }
   return undefined;
@@ -220,7 +224,7 @@ const attempts = new Map<string, number>();
 const MAX_ATTEMPTS = 3;
 
 /** Transcribes recorded sessions that don't have a transcript yet, one at a time. */
-export async function transcribePending(provider: TranscriptionProvider) {
+export async function transcribePending(providerFor: (geminiKey?: string) => TranscriptionProvider) {
   // Sessions transcribed before this step marked them done (the summary step does that when it's on).
   if (!config.GROQ_API_KEY) {
     await db
@@ -240,8 +244,11 @@ export async function transcribePending(provider: TranscriptionProvider) {
       key: botSessions.recordingKey,
       timeline: botSessions.speakerTimeline,
       participants: botSessions.participants,
+      geminiKey: users.geminiApiKey,
     })
     .from(botSessions)
+    .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
+    .innerJoin(users, eq(users.id, meetings.userId))
     .leftJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .where(
       and(
@@ -256,6 +263,7 @@ export async function transcribePending(provider: TranscriptionProvider) {
   for (const s of pending) {
     const log = (msg: string) => console.log(`[transcribe ${s.id}] ${msg}`);
     try {
+      const provider = providerFor(ownGeminiKey(s.geminiKey));
       const audio = await readFile(path.join(config.STORAGE_DIR, s.key!));
       log(`Sending ${audio.length} bytes to ${provider.name}`);
       const result = await provider.transcribe(audio, "audio/webm");

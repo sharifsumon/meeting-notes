@@ -1,9 +1,12 @@
 import { calendars, users } from "@minuteflow/db";
 import { asc, desc, eq } from "drizzle-orm";
 import { signIn } from "@/auth";
+import { decrypt } from "@/lib/crypto";
 import { db } from "@/lib/db";
+import { env } from "@/env";
 import { requireUserId } from "@/lib/session";
 import { AutoRecordToggle, CalendarToggle } from "./calendar-toggle";
+import { GeminiKeyForm } from "./gemini-key";
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ reconnect?: string }> }) {
   const userId = await requireUserId();
@@ -14,13 +17,23 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     .from(calendars)
     .where(eq(calendars.userId, userId))
     .orderBy(desc(calendars.isPrimary), asc(calendars.name));
-  const [user] = await db().select({ autoRecord: users.autoRecord }).from(users).where(eq(users.id, userId));
+  const [user] = await db()
+    .select({ autoRecord: users.autoRecord, geminiApiKey: users.geminiApiKey })
+    .from(users)
+    .where(eq(users.id, userId));
+  // Only the last four characters ever reach the browser.
+  let savedKeyEnd: string | null = null;
+  try {
+    savedKeyEnd = user?.geminiApiKey ? decrypt(user.geminiApiKey, env().TOKEN_ENCRYPTION_KEY).slice(-4) : null;
+  } catch {
+    savedKeyEnd = "????";
+  }
 
   return (
     <main className="flex w-full max-w-[1120px] flex-col gap-6 px-4 pt-7 pb-12 md:px-8">
       <div>
         <h1 className="text-[28px] font-extrabold tracking-[-0.02em]">Settings</h1>
-        <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches, and whether the notetaker records your calls on its own.</p>
+        <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches, whether the notetaker records your calls on its own, and which Gemini key it uses.</p>
       </div>
 
       {reconnect && (
@@ -47,6 +60,17 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             You can still skip a single meeting with its own switch.
           </p>
           <AutoRecordToggle enabled={user?.autoRecord ?? true} />
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="section-label">Gemini API key</h2>
+        <div className="card flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+          <p className="min-w-0 flex-[1_1_280px] text-sm text-muted">
+            MinuteFlow uses Gemini to transcribe and write notes. To use your own Google AI Studio quota and billing for
+            your calls, paste your key here. It&apos;s stored encrypted and never shown again.
+          </p>
+          <GeminiKeyForm saved={savedKeyEnd} />
         </div>
       </section>
 

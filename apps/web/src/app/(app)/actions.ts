@@ -7,6 +7,7 @@ import { and, eq, gt, inArray, isNotNull, isNull, lte, ne, notInArray } from "dr
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { env } from "@/env";
+import { encrypt } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { detectMeetingLink, meetCode } from "@/lib/meeting-links";
 import { GoogleReconnectRequired } from "@/lib/google/client";
@@ -248,5 +249,38 @@ export async function deleteMeeting(meetingId: string): Promise<ActionResult> {
 
   revalidatePath("/meetings");
   revalidatePath("/calendar");
+  return {};
+}
+
+/** Saves the user's own Gemini API key, after checking Google accepts it. Their calls then use it. */
+export async function saveGeminiKey(apiKey: string): Promise<ActionResult> {
+  const userId = await requireUserId();
+  const key = apiKey.trim();
+  if (!key) return { error: "Paste a Gemini API key first." };
+  try {
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", {
+      headers: { "x-goog-api-key": key },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      return { error: "Google didn't accept this key. Check it in Google AI Studio and try again." };
+    }
+    if (!res.ok) return { error: "Couldn't check the key with Google right now. Try again in a minute." };
+  } catch {
+    return { error: "Couldn't reach Google to check the key. Try again in a minute." };
+  }
+  await db()
+    .update(users)
+    .set({ geminiApiKey: encrypt(key, env().TOKEN_ENCRYPTION_KEY) })
+    .where(eq(users.id, userId));
+  revalidatePath("/settings");
+  return {};
+}
+
+/** Goes back to MinuteFlow's own Gemini key. */
+export async function removeGeminiKey(): Promise<ActionResult> {
+  const userId = await requireUserId();
+  await db().update(users).set({ geminiApiKey: null }).where(eq(users.id, userId));
+  revalidatePath("/settings");
   return {};
 }

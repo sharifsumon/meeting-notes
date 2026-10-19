@@ -37,8 +37,9 @@ const notesWriter = summarizer();
 let transcribeTimer: NodeJS.Timeout | undefined;
 async function transcribeTick() {
   try {
-    if (provider) await transcribePending(provider);
-    if (notesWriter) await summarizePending(notesWriter);
+    // A user's own Gemini key, saved in Settings, is used for their calls.
+    if (provider) await transcribePending((geminiKey) => transcriptionProvider(geminiKey) ?? provider);
+    if (notesWriter) await summarizePending((geminiKey) => summarizer(geminiKey) ?? notesWriter);
   } catch (err) {
     console.error("Post-call processing failed:", err);
   }
