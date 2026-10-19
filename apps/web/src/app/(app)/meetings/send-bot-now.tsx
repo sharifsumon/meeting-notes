@@ -5,7 +5,7 @@ import { Icon } from "@/components/ui";
 import { sendBotToMeeting } from "../actions";
 
 /** Sends the bot to this meeting right away instead of at its start time. */
-export function SendBotNowButton({ meetingId }: { meetingId: string }) {
+export function SendBotNowButton({ meetingId, label = "Send bot now" }: { meetingId: string; label?: string }) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
 
@@ -27,7 +27,7 @@ export function SendBotNowButton({ meetingId }: { meetingId: string }) {
         }
       >
         <Icon name="video" size={17} />
-        {pending ? "Sending…" : "Send bot now"}
+        {pending ? "Sending…" : label}
       </button>
       {message && <span className="text-xs text-red-600">{message.text}</span>}
     </div>

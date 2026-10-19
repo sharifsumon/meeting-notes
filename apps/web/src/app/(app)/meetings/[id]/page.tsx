@@ -121,6 +121,9 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             {supported && !ended && (!bot || (bot.status === "scheduled" && !shared && !m.botRequestedAt)) && (
               <SendBotNowButton meetingId={m.id} />
             )}
+            {supported && !ended && !shared && bot?.status === "failed" && !bot.recordingKey && (
+              <SendBotNowButton meetingId={m.id} label="Try again" />
+            )}
             {m.meetingUrl && !ended && (
               <JoinMeetingLink meetingId={m.id} url={m.meetingUrl} sendBot={supported && !bot && m.recordEnabled} />
             )}

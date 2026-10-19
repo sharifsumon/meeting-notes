@@ -84,9 +84,27 @@ export async function setAutoRecord(enabled: boolean): Promise<ActionResult> {
   return {};
 }
 
+/**
+ * Clears a bot attempt that failed without recording anything (not let in, sign-in trouble), so
+ * the meeting can get a fresh bot. The scheduler only sends one bot per meeting.
+ */
+async function clearFailedBot(userId: string, meetingId: string) {
+  await db()
+    .delete(botSessions)
+    .where(
+      and(
+        eq(botSessions.meetingId, meetingId),
+        eq(botSessions.status, "failed"),
+        isNull(botSessions.recordingKey),
+        inArray(botSessions.meetingId, db().select({ id: meetings.id }).from(meetings).where(eq(meetings.userId, userId))),
+      ),
+    );
+}
+
 /** "Send bot now" on a calendar meeting: the bot joins right away instead of at the start time. */
 export async function sendBotToMeeting(meetingId: string): Promise<ActionResult> {
   const userId = await requireUserId();
+  await clearFailedBot(userId, meetingId);
   // A bot still queued for this meeting counts as not sent yet: asking now moves it to the front.
   const withBot = db()
     .select({ id: botSessions.meetingId })
@@ -172,7 +190,8 @@ export async function sendBotNow(link: string): Promise<ActionResult> {
   await syncMeetings(userId).catch((err) => console.error("Calendar sync before sending the bot failed", err));
   const event = await calendarMeetingFor(userId, detected.url, now);
   if (event) {
-    await db().update(meetings).set({ recordEnabled: true }).where(eq(meetings.id, event.id));
+    await clearFailedBot(userId, event.id);
+    await db().update(meetings).set({ recordEnabled: true, botRequestedAt: now }).where(eq(meetings.id, event.id));
     revalidatePath("/meetings");
     return {};
   }
