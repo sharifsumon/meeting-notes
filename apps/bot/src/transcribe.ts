@@ -6,6 +6,7 @@ import { config } from "./config";
 import { db } from "./db";
 import { fullName, isBotName } from "./meet/names";
 import { gemini } from "./gemini";
+import { notesOn } from "./summarize";
 import { ownGeminiKey } from "./user-keys";
 import { assignSpeakers, groqWhisper, scriptLanguage, type WhisperSegment } from "./whisper";
 
@@ -252,7 +253,7 @@ const MAX_ATTEMPTS = 3;
 /** Transcribes recorded sessions that don't have a transcript yet, one at a time. */
 export async function transcribePending(providerFor: (geminiKey?: string) => TranscriptionProvider) {
   // Sessions transcribed before this step marked them done (the summary step does that when it's on).
-  if (!config.GROQ_API_KEY) {
+  if (!notesOn()) {
     await db
       .update(botSessions)
       .set({ status: "completed" })
@@ -297,7 +298,7 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
       const segments = nameTranscript(result.segments, s.timeline, s.participants);
       await db.insert(transcripts).values({ botSessionId: s.id, language, segments }).onConflictDoNothing();
       // With AI notes on, the summary step marks the session done; empty transcripts have nothing to summarize.
-      if (!config.GROQ_API_KEY || segments.length === 0) {
+      if (!notesOn() || segments.length === 0) {
         await db.update(botSessions).set({ status: "completed" }).where(eq(botSessions.id, s.id));
       }
       log(`Saved ${segments.length} segments`);

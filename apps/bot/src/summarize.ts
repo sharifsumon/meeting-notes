@@ -311,6 +311,11 @@ export function geminiNotes(apiKey: string, model: string): Summarizer {
 
 export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
 
+/** Whether AI notes are on, i.e. summarizer() writes them. */
+export function notesOn() {
+  return Boolean((config.NOTES_PROVIDER === "gemini" && config.GEMINI_API_KEY) || config.GROQ_API_KEY);
+}
+
 /** The configured summarizer, or null when its key isn't set. `geminiKey` replaces the server's Gemini key. */
 export function summarizer(geminiKey = config.GEMINI_API_KEY): Summarizer | null {
   if (config.NOTES_PROVIDER === "gemini") {

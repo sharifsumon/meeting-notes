@@ -48,7 +48,7 @@ async function transcribeTick() {
 if (provider || notesWriter) void transcribeTick();
 
 console.log(
-  `Bot worker started (concurrency ${config.BOT_CONCURRENCY}; transcription: ${provider?.name ?? "off, no DEEPGRAM_API_KEY"}; notes: ${notesWriter?.name ?? "off, no GROQ_API_KEY"})`,
+  `Bot worker started (concurrency ${config.BOT_CONCURRENCY}; transcription: ${provider?.name ?? "off, no DEEPGRAM_API_KEY"}; notes: ${notesWriter?.name ?? "off, no GEMINI_API_KEY or GROQ_API_KEY"})`,
 );
 
 async function shutdown() {

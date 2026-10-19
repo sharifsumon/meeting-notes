@@ -48,8 +48,8 @@ export default function PrivacyPage() {
 
       <h2>Services that process data for us</h2>
       <ul>
-        <li>Deepgram and Google (Gemini) turn recordings into transcripts.</li>
-        <li>Groq writes summaries, minutes and translations from transcripts.</li>
+        <li>Google (Gemini) turns recordings into transcripts, with Deepgram as a backup.</li>
+        <li>Google (Gemini) writes summaries and minutes from transcripts.</li>
       </ul>
       <p>They process the data only to return results to us, under their own data-protection terms.</p>
 
