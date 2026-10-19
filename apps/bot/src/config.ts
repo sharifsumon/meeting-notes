@@ -28,6 +28,9 @@ const schema = z.object({
   NOTES_PROVIDER: z.enum(["groq", "gemini"]).default("groq"),
   // "true" also writes a Bangla copy of every call's notes.
   NOTES_BANGLA: z.enum(["true", "false"]).default("false"),
+  // Who transcribes calls: deepgram (Deepgram, with TRANSCRIBE_BANGLA_PROVIDER for non-English calls) or
+  // gemini (Gemini writes every call and tells voices apart; Deepgram only steps in if Gemini fails).
+  TRANSCRIPTION_PROVIDER: z.enum(["deepgram", "gemini"]).default("deepgram"),
   // Who transcribes calls that aren't clearly English (Bangla, or Bangla mixed with English).
   // deepgram: Deepgram's Bangla model. whisper: Groq's Whisper. gemini: Gemini (needs GEMINI_API_KEY).
   TRANSCRIBE_BANGLA_PROVIDER: z.enum(["deepgram", "whisper", "gemini"]).default("deepgram"),

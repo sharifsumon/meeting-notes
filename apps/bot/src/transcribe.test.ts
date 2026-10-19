@@ -143,3 +143,30 @@ describe("nameOnlySpeaker", () => {
     expect(nameOnlySpeaker([seg("Speaker 1")], ["Sharif", "Rayyan"])[0]!.speaker).toBe("Speaker 1");
   });
 });
+
+describe("voicesOnly", () => {
+  it("numbers Gemini's voices and falls back when Gemini fails", async () => {
+    const { voicesOnly } = await import("./transcribe");
+    const lines = {
+      name: "Gemini",
+      transcribe: async () => [
+        { startMs: 0, endMs: 1_000, text: "আমরা শুরু করি", voice: "0:A" },
+        { startMs: 1_000, endMs: 2_000, text: "Sure, go ahead", voice: "0:B" },
+        { startMs: 2_000, endMs: 3_000, text: "ঠিক আছে", voice: "0:A" },
+      ],
+    };
+    expect(await voicesOnly(lines).transcribe(Buffer.from("a"), "audio/webm")).toEqual({
+      language: "bn,en",
+      segments: [
+        { speaker: "Speaker 1", startMs: 0, endMs: 1_000, text: "আমরা শুরু করি" },
+        { speaker: "Speaker 2", startMs: 1_000, endMs: 2_000, text: "Sure, go ahead" },
+        { speaker: "Speaker 1", startMs: 2_000, endMs: 3_000, text: "ঠিক আছে" },
+      ],
+    });
+
+    const broken = { name: "Gemini", transcribe: async () => Promise.reject(new Error("Gemini returned 429")) };
+    const fallback = { name: "Deepgram", transcribe: async () => ({ language: "en", segments: [] }) };
+    expect(await voicesOnly(broken, fallback).transcribe(Buffer.from("a"), "audio/webm")).toEqual({ language: "en", segments: [] });
+    await expect(voicesOnly(broken).transcribe(Buffer.from("a"), "audio/webm")).rejects.toThrow("429");
+  });
+});

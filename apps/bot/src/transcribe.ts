@@ -196,11 +196,37 @@ export function nameTranscript(segments: TranscriptSegment[], timeline: SpeakerT
   return nameOnlySpeaker(nameSpeakers(segments, timeline), people).map((seg) => ({ ...seg, speaker: fullName(seg.speaker, people) }));
 }
 
+/**
+ * Transcribes with one line transcriber that also tells voices apart (Gemini), numbering its voices
+ * "Speaker N" for the captions to name. `fallback` takes over when it fails, e.g. out of quota.
+ */
+export function voicesOnly(lines: LineTranscriber, fallback?: TranscriptionProvider): TranscriptionProvider {
+  return {
+    name: fallback ? `${lines.name}, ${fallback.name} if it fails` : lines.name,
+    async transcribe(audio, mimeType) {
+      try {
+        const segments = assignSpeakers(await lines.transcribe(audio), []);
+        return { language: scriptLanguage(segments), segments };
+      } catch (err) {
+        if (!fallback) throw err;
+        console.error(`[transcribe] ${lines.name} failed, using ${fallback.name}: ${err}`);
+        return fallback.transcribe(audio, mimeType);
+      }
+    },
+  };
+}
+
 /** The configured provider, or null when no transcription key is set. `geminiKey` replaces the server's Gemini key. */
-export function transcriptionProvider(geminiKey?: string): TranscriptionProvider | null {
-  if (!config.DEEPGRAM_API_KEY) return null;
+export function transcriptionProvider(geminiKey = config.GEMINI_API_KEY): TranscriptionProvider | null {
   const extra = config.TRANSCRIBE_EXTRA_LANGUAGES.split(",").map((l) => l.trim()).filter(Boolean);
-  return deepgram(config.DEEPGRAM_API_KEY, extra, banglaTranscriber(config.TRANSCRIBE_BANGLA_PROVIDER, geminiKey));
+  const viaDeepgram = config.DEEPGRAM_API_KEY
+    ? deepgram(config.DEEPGRAM_API_KEY, extra, banglaTranscriber(config.TRANSCRIBE_BANGLA_PROVIDER, geminiKey))
+    : null;
+  if (config.TRANSCRIPTION_PROVIDER === "gemini") {
+    if (geminiKey) return voicesOnly(gemini(geminiKey, config.GEMINI_MODEL), viaDeepgram ?? undefined);
+    console.error("[transcribe] TRANSCRIPTION_PROVIDER=gemini needs GEMINI_API_KEY; using Deepgram");
+  }
+  return viaDeepgram;
 }
 
 /** The transcriber for calls that aren't clearly English; undefined means Deepgram's own Bangla. */
