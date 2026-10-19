@@ -1,6 +1,6 @@
 import "server-only";
 import { botSessions, calendars, meetings, notes } from "@minuteflow/db";
-import { and, asc, desc, eq, gte, isNotNull, isNull, lte, notInArray, or, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, inArray, or, type SQL } from "drizzle-orm";
 import { wasNotLetIn, type BotStatus } from "@/components/ui";
 import { db } from "@/lib/db";
 import { meetCode, type MeetingPlatform } from "@/lib/meeting-links";
@@ -111,14 +111,14 @@ export async function upcomingMeetings(userId: string): Promise<MeetingRow[]> {
   return oneCopyEach(rows.map(toRow));
 }
 
-/** Meetings the bot was sent to, newest first, leaving out calls it never recorded (not let in, failed or skipped). */
+/** Meetings the bot is recording or has recorded, newest first; calls still joining, waiting or never let in stay out. */
 export async function recordedMeetings(userId: string): Promise<MeetingRow[]> {
   const rows = await base()
     .where(
       and(
         visible(userId),
         isNotNull(botSessions.id),
-        notInArray(botSessions.status, ["failed", "cancelled"]),
+        inArray(botSessions.status, ["recording", "processing", "completed"]),
         lte(meetings.startsAt, new Date()),
       ),
     )
