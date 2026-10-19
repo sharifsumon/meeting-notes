@@ -22,6 +22,8 @@ async function getAccessToken(userId: string): Promise<string> {
     .where(and(eq(accounts.userId, userId), eq(accounts.provider, "google")))
     .limit(1);
   if (!account) throw new GoogleReconnectRequired("No Google account linked");
+  // Google's consent screen lets people leave the calendar box unticked.
+  if (!hasCalendarScope(account.scope)) throw new GoogleReconnectRequired("Calendar access was not granted");
 
   const accessToken = decryptToken(account.access_token);
   const nowS = Math.floor(Date.now() / 1000);
@@ -78,7 +80,10 @@ export async function googleGet<T>(userId: string, url: string, params: Record<s
     const body = await res.text();
     // The user unticked the calendar permission on the consent screen. Other 403s (rate limits,
     // a calendar they can only see free/busy for) aren't fixed by signing in again.
-    if (res.status === 403 && missingScope(body)) throw new GoogleReconnectRequired("Calendar access was not granted");
+    if (res.status === 403 && missingScope(body)) {
+      console.warn(`Google calendar access not granted for user ${userId}`);
+      throw new GoogleReconnectRequired("Calendar access was not granted");
+    }
     throw new GoogleApiError(res.status, `Google API ${res.status} for ${url}: ${body.slice(0, 300)}`);
   }
   return (await res.json()) as T;
@@ -92,6 +97,13 @@ export class GoogleApiError extends Error {
     super(message);
     this.name = "GoogleApiError";
   }
+}
+
+export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+
+/** Whether the scopes Google granted include reading the calendar. Unknown (null) counts as granted. */
+export function hasCalendarScope(scope: string | null | undefined) {
+  return scope == null || scope.split(/\s+/).includes(CALENDAR_SCOPE);
 }
 
 /** Whether a 403 body says the token lacks the scope, as opposed to any other refusal. */

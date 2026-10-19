@@ -21,3 +21,12 @@ describe("missingScope", () => {
     expect(missingScope(JSON.stringify({ error: { code: 403, errors: [{ reason: "forbidden" }] } }))).toBe(false);
   });
 });
+
+describe("hasCalendarScope", () => {
+  it("spots a sign-in where the calendar box was left unticked", async () => {
+    const { hasCalendarScope } = await import("./client");
+    expect(hasCalendarScope("https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/userinfo.profile")).toBe(false);
+    expect(hasCalendarScope("openid https://www.googleapis.com/auth/calendar.readonly")).toBe(true);
+    expect(hasCalendarScope(null)).toBe(true);
+  });
+});

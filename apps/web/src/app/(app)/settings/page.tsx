@@ -1,7 +1,8 @@
-import { calendars, users } from "@minuteflow/db";
-import { asc, desc, eq } from "drizzle-orm";
+import { accounts, calendars, users } from "@minuteflow/db";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { signIn } from "@/auth";
 import { decrypt } from "@/lib/crypto";
+import { hasCalendarScope } from "@/lib/google/client";
 import { db } from "@/lib/db";
 import { env } from "@/env";
 import { requireUserId } from "@/lib/session";
@@ -21,6 +22,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     .select({ autoRecord: users.autoRecord, geminiApiKey: users.geminiApiKey })
     .from(users)
     .where(eq(users.id, userId));
+  const [google] = await db()
+    .select({ scope: accounts.scope })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), eq(accounts.provider, "google")))
+    .limit(1);
+  const calendarNotGranted = Boolean(google) && !hasCalendarScope(google!.scope);
   // Only the last four characters ever reach the browser.
   let savedKeyEnd: string | null = null;
   try {
@@ -36,9 +43,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches, whether the notetaker records your calls on its own, and which Gemini key it uses.</p>
       </div>
 
-      {reconnect && (
+      {(reconnect || calendarNotGranted) && (
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <span>We lost access to your Google Calendar. Reconnect and make sure calendar access is ticked.</span>
+          <span>
+            {calendarNotGranted
+              ? "MinuteFlow can't see your Google Calendar yet. Press Reconnect Google and tick “See your calendars” on Google's screen."
+              : "We lost access to your Google Calendar. Reconnect and make sure calendar access is ticked."}
+          </span>
           <form
             action={async () => {
               "use server";
