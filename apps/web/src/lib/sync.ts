@@ -3,6 +3,7 @@ import { calendars, meetings, users } from "@minuteflow/db";
 import { and, eq, gte, lt, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { listCalendars, listEvents } from "@/lib/google/calendar";
+import { GoogleApiError } from "@/lib/google/client";
 import { normalizeGoogleEvent } from "@/lib/google/normalize";
 
 const LOOKBACK_MS = 60 * 60 * 1000;
@@ -52,9 +53,16 @@ export async function syncMeetings(userId: string) {
   const autoRecord = Boolean(user?.consentedAt && user.autoRecord);
 
   for (const cal of enabled) {
-    const events = (await listEvents(userId, cal.externalId, timeMin, timeMax))
-      .map(normalizeGoogleEvent)
-      .filter((e) => e !== null);
+    let listed;
+    try {
+      listed = await listEvents(userId, cal.externalId, timeMin, timeMax);
+    } catch (err) {
+      // One calendar Google won't list (removed, or free/busy only) shouldn't stop the others.
+      if (!(err instanceof GoogleApiError) || ![403, 404].includes(err.status)) throw err;
+      console.error(`Skipping calendar ${cal.id}: ${err.message}`);
+      continue;
+    }
+    const events = listed.map(normalizeGoogleEvent).filter((e) => e !== null);
 
     for (const e of events) {
       await db()

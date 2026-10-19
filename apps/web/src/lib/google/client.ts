@@ -74,10 +74,27 @@ export async function googleGet<T>(userId: string, url: string, params: Record<s
     cache: "no-store",
   });
   if (res.status === 401) throw new GoogleReconnectRequired();
-  if (res.status === 403) {
-    // Usually the user unticked the calendar permission on the consent screen.
-    throw new GoogleReconnectRequired("Calendar access was not granted");
+  if (!res.ok) {
+    const body = await res.text();
+    // The user unticked the calendar permission on the consent screen. Other 403s (rate limits,
+    // a calendar they can only see free/busy for) aren't fixed by signing in again.
+    if (res.status === 403 && missingScope(body)) throw new GoogleReconnectRequired("Calendar access was not granted");
+    throw new GoogleApiError(res.status, `Google API ${res.status} for ${url}: ${body.slice(0, 300)}`);
   }
-  if (!res.ok) throw new Error(`Google API ${res.status} for ${url}`);
   return (await res.json()) as T;
+}
+
+export class GoogleApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GoogleApiError";
+  }
+}
+
+/** Whether a 403 body says the token lacks the scope, as opposed to any other refusal. */
+export function missingScope(body: string) {
+  return /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions|insufficient authentication scopes/i.test(body);
 }

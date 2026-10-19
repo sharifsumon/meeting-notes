@@ -68,7 +68,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
         <p className="text-muted">
           {tab === "upcoming" ? (
             <>
-              No upcoming meetings in the next two weeks. Check which calendars are turned on in{" "}
+              Currently you have no scheduled meeting. Check which calendars are turned on in{" "}
               <Link href="/settings" className="font-semibold text-accent hover:underline">
                 Settings
               </Link>
