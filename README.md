@@ -55,7 +55,7 @@ Other commands: `pnpm test`, `pnpm typecheck`, `pnpm build`, and `pnpm db:genera
 ## Google OAuth setup
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Calendar API**.
-2. Configure the **OAuth consent screen**: External, add the scope `.../auth/calendar.readonly`, and add yourself as a test user. (Public launch needs Google verification because calendar access is a sensitive scope.)
+2. Configure the **OAuth consent screen**: External, add the scopes `.../auth/calendar.calendarlist.readonly` and `.../auth/calendar.events.readonly` (nothing broader), and add yourself as a test user. (Public launch needs Google verification because calendar access is a sensitive scope.)
 3. Create an **OAuth client ID** of type *Web application* with these authorized redirect URIs:
    - `https://minuteflow.tech/api/auth/callback/google`
    - `http://localhost:3000/api/auth/callback/google`

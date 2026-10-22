@@ -5,13 +5,14 @@ import type { Adapter } from "next-auth/adapters";
 import Google from "next-auth/providers/google";
 import { env } from "@/env";
 import { db } from "@/lib/db";
+import { CALENDAR_SCOPES } from "@/lib/google/client";
 import { saveOAuthTokens, toStoredTokens } from "@/lib/oauth-tokens";
 
 export const GOOGLE_SCOPES = [
   "openid",
   "email",
   "profile",
-  "https://www.googleapis.com/auth/calendar.readonly",
+  ...CALENDAR_SCOPES,
 ];
 
 // Config is built lazily so `next build` doesn't need secrets or a database.

@@ -47,8 +47,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span>
             {calendarNotGranted
-              ? "MinuteFlow can't see your Google Calendar yet. Press Reconnect Google and tick “See your calendars” on Google's screen."
-              : "We lost access to your Google Calendar. Reconnect and make sure calendar access is ticked."}
+              ? "MinuteFlow can't see your Google Calendar yet. Press Reconnect Google and tick both calendar boxes on Google's screen."
+              : "We lost access to your Google Calendar. Reconnect and make sure both calendar boxes are ticked."}
           </span>
           <form
             action={async () => {

@@ -99,11 +99,19 @@ export class GoogleApiError extends Error {
   }
 }
 
-export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+/** The narrowest scopes the app needs: list the user's calendars, and read events on them. */
+export const CALENDAR_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events.readonly",
+];
+/** The broad scope older sign-ins were granted; it still covers both calls. */
+const LEGACY_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
 /** Whether the scopes Google granted include reading the calendar. Unknown (null) counts as granted. */
 export function hasCalendarScope(scope: string | null | undefined) {
-  return scope == null || scope.split(/\s+/).includes(CALENDAR_SCOPE);
+  if (scope == null) return true;
+  const granted = scope.split(/\s+/);
+  return granted.includes(LEGACY_CALENDAR_SCOPE) || CALENDAR_SCOPES.every((s) => granted.includes(s));
 }
 
 /** Whether a 403 body says the token lacks the scope, as opposed to any other refusal. */

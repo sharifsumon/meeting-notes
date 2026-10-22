@@ -29,4 +29,13 @@ describe("hasCalendarScope", () => {
     expect(hasCalendarScope("openid https://www.googleapis.com/auth/calendar.readonly")).toBe(true);
     expect(hasCalendarScope(null)).toBe(true);
   });
+
+  it("needs both narrow calendar scopes", async () => {
+    const { hasCalendarScope } = await import("./client");
+    const list = "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+    const events = "https://www.googleapis.com/auth/calendar.events.readonly";
+    expect(hasCalendarScope(`openid ${list} ${events}`)).toBe(true);
+    expect(hasCalendarScope(`openid ${events}`)).toBe(false);
+    expect(hasCalendarScope(`openid ${list}`)).toBe(false);
+  });
 });
