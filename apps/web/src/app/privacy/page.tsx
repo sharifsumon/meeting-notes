@@ -45,6 +45,12 @@ export default function PrivacyPage() {
         shared with anyone else, except a meeting&apos;s title, which is included when we ask an AI service to write
         that meeting&apos;s notes.
       </p>
+      <p>
+        We do not use data obtained through Google Workspace APIs, including your Google Calendar data, to develop,
+        improve or train generalized or non-personalized AI or machine-learning models. We do not retain it for that
+        purpose, and we do not let any third party use it for that purpose. The AI service that writes your notes
+        processes the meeting title only to return that meeting&apos;s notes to you.
+      </p>
 
       <h2>Services that process data for us</h2>
       <ul>
