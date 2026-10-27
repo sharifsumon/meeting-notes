@@ -82,6 +82,8 @@ export function deepgram(apiKey: string, extraLanguages: string[] = [], bangla?:
       punctuate: "true",
       diarize: "true",
       utterances: "true",
+      // Keeps our audio out of Deepgram's Model Improvement Program, so it isn't used to train their models.
+      mip_opt_out: "true",
       ...(language ? { language } : { detect_language: "true" }),
     })) {
       url.searchParams.set(k, v);
