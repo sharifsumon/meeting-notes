@@ -21,7 +21,7 @@ export type MeetingNotes = NoteContent;
 /** Writes notes from a transcript. Swap the implementation to change model or provider. */
 export interface Summarizer {
   readonly name: string;
-  summarize(input: { title: string; segments: TranscriptSegment[]; participants?: string[]; language?: string }): Promise<MeetingNotes>;
+  summarize(input: { title?: string; segments: TranscriptSegment[]; participants?: string[]; language?: string }): Promise<MeetingNotes>;
   /** The same notes in another language, e.g. "Bangla". */
   translate(notes: MeetingNotes, language: string): Promise<MeetingNotes>;
 }
@@ -201,20 +201,20 @@ export function groq(apiKey: string, model: string): Summarizer {
     name: `Groq (${model})`,
     async summarize({ title, segments, participants = [], language }) {
       // Names help the model attribute action items when the transcript only numbers speakers.
-      const header = participants.length ? `Meeting: ${title}\nPeople in the call: ${participants.join(", ")}` : `Meeting: ${title}`;
+      const header = meetingHeader(title, participants);
       const writeIn = language ? `Write the notes in ${language}, whatever languages the meeting used.` : "Use the language of the meeting.";
       const system = `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}\n${writeIn}`;
       // Small chunks keep each request inside Groq's tokens-per-minute limit (8k for gpt-oss-120b
       // on demand), counting the instructions and the reply too.
       const chunks = transcriptChunks(segments, 3_500);
       if (chunks.length === 1) {
-        return withAttendees(parseNotes(await complete(system, `${header}\n\nTranscript:\n${chunks[0]}`)), participants, segments);
+        return withAttendees(parseNotes(await complete(system, `${header}\nTranscript:\n${chunks[0]}`)), participants, segments);
       }
       const parts: MeetingNotes[] = [];
       for (const [i, chunk] of chunks.entries()) {
         parts.push(
           parseNotes(
-            await complete(system, `${header}\nPart ${i + 1} of ${chunks.length} of the transcript:\n${chunk}`),
+            await complete(system, `${header}Part ${i + 1} of ${chunks.length} of the transcript:\n${chunk}`),
           ),
         );
       }
@@ -222,7 +222,7 @@ export function groq(apiKey: string, model: string): Summarizer {
         parseNotes(
           await complete(
             `You merge partial meeting notes into one set of notes, removing duplicates and joining topics that continue across parts. ${NOTES_SHAPE}\n${writeIn}`,
-            `Meeting: ${title}\nNotes for each part, in order:\n${JSON.stringify(batch)}`,
+            `${meetingHeader(title, [])}Notes for each part, in order:\n${JSON.stringify(batch)}`,
           ),
         );
       // A long call's notes can be too big to merge at once, so merge them a few at a time.
@@ -282,12 +282,12 @@ export function geminiNotes(apiKey: string, model: string): Summarizer {
   return {
     name: `Gemini (${model})`,
     async summarize({ title, segments, participants = [], language }) {
-      const header = participants.length ? `Meeting: ${title}\nPeople in the call: ${participants.join(", ")}` : `Meeting: ${title}`;
+      const header = meetingHeader(title, participants);
       const writeIn = language ? `Write the notes in ${language}, whatever languages the meeting used.` : "Use the language of the meeting.";
       const transcript = transcriptChunks(segments, Number.POSITIVE_INFINITY).join("");
       const raw = await complete(
         `You write concise, accurate meeting notes from transcripts. ${NOTES_SHAPE}\n${writeIn}`,
-        `${header}\n\nTranscript:\n${transcript}`,
+        `${header}\nTranscript:\n${transcript}`,
       );
       return withAttendees(parseNotes(raw), participants, segments);
     },
@@ -362,8 +362,9 @@ export async function summarizePending(writerFor: (geminiKey?: string) => Summar
       log(`Summarizing ${s.segments.length} segments with ${provider.name}`);
       // Sessions recorded before the bot left itself out list it as a participant.
       const participants = dedupeNames(s.participants.filter((n) => !isBotName(n, [config.BOT_ACCOUNT_NAME])));
-      // Notes are in English, with a Bangla copy when NOTES_BANGLA is on.
-      const result = await provider.summarize({ title: s.title, segments: s.segments, participants, language: "English" });
+      // Notes are in English, with a Bangla copy when NOTES_BANGLA is on. The calendar event's title is
+      // left out: data from Google's APIs never goes to an AI service (Google verification, Limited Use).
+      const result = await provider.summarize({ segments: s.segments, participants, language: "English" });
       const translations: Record<string, MeetingNotes> =
         config.NOTES_BANGLA === "true" ? { bn: await provider.translate(result, "Bangla (বাংলা)") } : {};
       await db
@@ -388,4 +389,9 @@ export async function summarizePending(writerFor: (geminiKey?: string) => Summar
       }
     }
   }
+}
+
+/** The lines naming the meeting and its people that open a prompt, each ending in a newline. */
+function meetingHeader(title: string | undefined, participants: string[]) {
+  return (title ? `Meeting: ${title}\n` : "") + (participants.length ? `People in the call: ${participants.join(", ")}\n` : "");
 }
