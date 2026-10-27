@@ -34,7 +34,7 @@ export default function PrivacyPage() {
       <p>
         Only to provide MinuteFlow to you: listing your meetings, sending the notetaker to the calls you choose, and
         producing transcripts, summaries and minutes. We don&apos;t sell your data, show you ads, or use your data to
-        train AI models ourselves.
+        train AI models.
       </p>
 
       <h2>Google user data</h2>
@@ -52,13 +52,14 @@ export default function PrivacyPage() {
 
       <h2>Services that process data for us</h2>
       <ul>
-        <li>Google (Gemini) turns recordings into transcripts, with Deepgram as a backup.</li>
-        <li>Google (Gemini) writes summaries and minutes from transcripts.</li>
+        <li>Deepgram turns recordings into transcripts.</li>
+        <li>Groq writes summaries and minutes from transcripts.</li>
       </ul>
       <p>
-        They process the data to return results to us, under their own terms. We currently use Gemini&apos;s free tier,
-        under which Google may use recordings and transcripts sent to it to improve its products. Data from your Google
-        Calendar is never sent to these services.
+        They process the data only to return results to us, and under their API terms they don&apos;t use it to train
+        their models. If you add your own Gemini API key in Settings, your meetings are processed by Google Gemini
+        under the terms of your own Google account instead. Data from your Google Calendar is never sent to any of
+        these services.
       </p>
 
       <h2>Who can see a meeting</h2>
