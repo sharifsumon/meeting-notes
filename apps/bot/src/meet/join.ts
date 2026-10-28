@@ -465,6 +465,8 @@ async function enableCaptions(page: Page, log: (m: string) => void) {
   // The watcher polls for the captions area itself, so it's safe to start before captions show up.
   await page.evaluate(installCaptionWatcher);
   await dismissPopups(page);
+  // Meet hides its toolbar, captions button included, until the mouse moves.
+  await page.mouse.move(640, 600).catch(() => {});
 
   // Each way of turning captions on is a toggle, so only try the next one once captions are
   // clearly still off. Meet can take several seconds to turn them on.
@@ -477,15 +479,7 @@ async function enableCaptions(page: Page, log: (m: string) => void) {
         await page.getByRole("menuitem", { name: /turn on captions/i }).first().click({ timeout: 3_000 });
       },
     ],
-    [
-      "shortcut",
-      async () => {
-        // "c" is Meet's shortcut, but not while a text box (the chat) has focus.
-        await page.keyboard.press("Escape");
-        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-        await page.keyboard.press("c");
-      },
-    ],
+    ["shortcut", () => captionsShortcut(page)],
   ];
   for (const [how, attempt] of attempts) {
     const state = await captionsState(page);
@@ -517,6 +511,28 @@ export async function captionsState(page: Page): Promise<"on" | "off" | "unknown
     return "on";
   }
   return (await visible(page.getByRole("button", { name: /turn on captions/i }))) ? "off" : "unknown";
+}
+
+/** Presses "c", Meet's captions shortcut, which works even when the toolbar is hidden or covered. */
+async function captionsShortcut(page: Page) {
+  // Not while a text box (the chat) has focus, or it types a "c".
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("c");
+}
+
+/**
+ * Whether the caption watcher has seen captions on screen in the last few seconds. The shortcut is a
+ * toggle, so it must not be pressed while captions are on but the button can't be read.
+ */
+async function captionsShowing(page: Page) {
+  const seen = () =>
+    page
+      .evaluate(() => (window as unknown as { __mfCaptionStats?: () => { regionSeen: number } }).__mfCaptionStats?.().regionSeen ?? 0)
+      .catch(() => 0);
+  const before = await seen();
+  await sleep(2_000);
+  return (await seen()) > before;
 }
 
 async function waitForCaptions(page: Page, timeoutMs: number) {
@@ -565,6 +581,7 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
   let ownerSeen = false;
   let ownerGoneSince: number | null = null;
   let nextCaptionTry = Date.now() + CAPTION_RETRY_MS;
+  let captionRetries = 0;
 
   for (;;) {
     if (Date.now() >= leaveBy.getTime()) return "scheduled end passed";
@@ -581,8 +598,20 @@ async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGon
       await dismissPopups(page);
       // Meet hides its toolbar after a while; moving the mouse brings it back.
       await page.mouse.move(640, 600).catch(() => {});
-      await page.getByRole("button", { name: /turn on captions/i }).first().click({ timeout: 3_000 }).catch(() => {});
-      log(`Retried captions: ${await waitForCaptions(page, 10_000)}`);
+      const button = page.getByRole("button", { name: /turn on captions/i }).first();
+      let how = "button";
+      if (await button.isVisible().catch(() => false)) {
+        await button.click({ timeout: 3_000 }).catch(() => {});
+      } else if (!(await captionsShowing(page))) {
+        // No captions button to press (e.g. hidden behind a banner); Meet's shortcut still works.
+        how = "shortcut";
+        await captionsShortcut(page).catch(() => {});
+      }
+      const state = await waitForCaptions(page, 10_000);
+      captionRetries++;
+      // The first few misses say what was on screen, for fixing calls where captions never come on.
+      const detail = state === "on" || captionRetries > 3 ? "" : `; buttons: ${(await visibleButtons(page)).join(" | ")}`;
+      log(`Retried captions (${how}): ${state}${detail}`);
     }
 
     if (owner && people) {
