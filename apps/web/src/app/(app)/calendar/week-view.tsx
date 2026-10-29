@@ -6,7 +6,7 @@ import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui
 import type { MeetingRow } from "@/lib/meetings";
 import { RecordSwitch } from "../meetings/record-switch";
 
-const HOUR_PX = 60;
+const HOUR_PX = 96;
 const subscribeNoop = () => () => {};
 
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
@@ -137,7 +137,7 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
 
       <div className="flex flex-wrap items-start gap-5">
         <div className="card min-w-0 flex-[999_1_600px] overflow-x-auto">
-          <div className={`grid ${isDay ? "grid-cols-[56px_minmax(0,1fr)]" : "min-w-[760px] grid-cols-[56px_repeat(7,minmax(0,1fr))]"}`}>
+          <div className={`grid ${isDay ? "grid-cols-[56px_minmax(0,1fr)]" : "min-w-[900px] grid-cols-[56px_repeat(7,minmax(0,1fr))]"}`}>
             <div className="border-b border-line" />
             {days.map((d) => {
               const today = sameDay(d, now);
@@ -177,6 +177,7 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
                       onClick={() => setSelectedId(p.m.id)}
                       aria-label={`${p.m.title}, ${timeFmt.format(new Date(p.m.startsAt))}`}
                       aria-pressed={on}
+                      title={`${p.m.title}\n${timeFmt.format(new Date(p.m.startsAt))} – ${timeFmt.format(new Date(p.m.endsAt))}`}
                       className={`absolute flex flex-col gap-0.5 overflow-hidden rounded-lg border px-1.5 py-1 text-left ${platform.tint} ${
                         on ? "z-10 ring-2 ring-ink" : ""
                       }`}
@@ -187,14 +188,23 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
                         width: `calc(${100 / p.lanes}% - 6px)`,
                       }}
                     >
-                      <span className="flex items-center gap-1 text-[10px] font-bold tracking-[0.04em] uppercase">
-                        <span className="size-1.5 flex-none rounded-full" style={{ background: platform.dot }} />
-                        <span className="truncate">{p.m.platform ? platform.label : "No link"}</span>
-                      </span>
-                      <span className="max-w-full truncate text-xs leading-tight font-bold">{p.m.title}</span>
-                      <span className="truncate text-[11px]">
-                        {timeFmt.format(new Date(p.m.startsAt))} – {timeFmt.format(new Date(p.m.endsAt))}
-                      </span>
+                      {p.bottom - p.top < 0.6 ? (
+                        <span className="flex items-baseline gap-1.5 truncate text-xs leading-tight">
+                          <span className="truncate font-bold">{p.m.title}</span>
+                          <span className="flex-none text-[11px]">{timeFmt.format(new Date(p.m.startsAt))}</span>
+                        </span>
+                      ) : (
+                        <>
+                          <span className="flex items-center gap-1 text-[10px] font-bold tracking-[0.04em] uppercase">
+                            <span className="size-1.5 flex-none rounded-full" style={{ background: platform.dot }} />
+                            <span className="truncate">{p.m.platform ? platform.label : "No link"}</span>
+                          </span>
+                          <span className="max-w-full truncate text-[13px] leading-tight font-bold">{p.m.title}</span>
+                          <span className="truncate text-[11px]">
+                            {timeFmt.format(new Date(p.m.startsAt))} – {timeFmt.format(new Date(p.m.endsAt))}
+                          </span>
+                        </>
+                      )}
                     </button>
                   );
                 })}
