@@ -24,6 +24,11 @@
   body {
     @apply bg-page text-ink antialiased;
   }
+  /* Tailwind 4 leaves buttons with the arrow cursor; show the hand on anything clickable. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
 }
 
 @utility card {
