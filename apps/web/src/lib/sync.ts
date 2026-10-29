@@ -1,10 +1,11 @@
 import "server-only";
 import { calendars, meetings, users } from "@minuteflow/db";
-import { and, eq, gte, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lt, ne, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { listCalendars, listEvents } from "@/lib/google/calendar";
 import { GoogleApiError } from "@/lib/google/client";
-import { normalizeGoogleEvent } from "@/lib/google/normalize";
+import { guestEmails, normalizeGoogleEvent, type NormalizedEvent } from "@/lib/google/normalize";
+import { meetCode } from "@/lib/meeting-links";
 
 const LOOKBACK_MS = 60 * 60 * 1000;
 const LOOKAHEAD_MS = 14 * 24 * 60 * 60 * 1000;
@@ -62,10 +63,13 @@ export async function syncMeetings(userId: string) {
       console.error(`Skipping calendar ${cal.id}: ${err.message}`);
       continue;
     }
-    const events = listed.map(normalizeGoogleEvent).filter((e) => e !== null);
+    const events = listed.flatMap((g) => {
+      const e = normalizeGoogleEvent(g);
+      return e ? [{ ...e, guests: guestEmails(g) }] : [];
+    });
 
-    for (const e of events) {
-      await db()
+    for (const { guests, ...e } of events) {
+      const [row] = await db()
         .insert(meetings)
         .values({
           userId,
@@ -85,7 +89,12 @@ export async function syncMeetings(userId: string) {
             platform: e.platform,
             cancelled: e.cancelled,
           },
-        });
+        })
+        .returning({ id: meetings.id });
+      if (row && e.platform === "google_meet" && e.meetingUrl) {
+        await copyForInvitedUsers(userId, row.id, e, guests);
+        await dropInvitedCopies(userId, e);
+      }
     }
 
     // Events deleted from the calendar no longer come back from the API: mark them cancelled.
@@ -102,8 +111,78 @@ export async function syncMeetings(userId: string) {
         ),
       );
 
+    // Invited users' copies follow the event they came from.
+    await db()
+      .update(meetings)
+      .set({ cancelled: true })
+      .where(
+        and(
+          eq(meetings.cancelled, false),
+          inArray(
+            meetings.invitedFrom,
+            db().select({ id: meetings.id }).from(meetings).where(and(eq(meetings.calendarId, cal.id), eq(meetings.cancelled, true))),
+          ),
+        ),
+      );
+
     await db().update(calendars).set({ lastSyncedAt: new Date() }).where(eq(calendars.id, cal.id));
   }
+}
+
+/**
+ * Other MinuteFlow users invited to this Meet call (matched by their account email) get their own
+ * copy of it, so they see its recording and notes even when the event isn't on a calendar they
+ * connected. Only one bot joins: the scheduler sends one per call, and the copies share its recording.
+ */
+async function copyForInvitedUsers(ownerId: string, sourceId: string, e: NormalizedEvent, guests: string[]) {
+  if (!guests.length) return;
+  const invited = await db()
+    .select({ id: users.id, consentedAt: users.consentedAt, autoRecord: users.autoRecord })
+    .from(users)
+    .where(and(ne(users.id, ownerId), inArray(sql`lower(${users.email})`, guests)));
+  for (const user of invited) {
+    const theirs = await db()
+      .select({ id: meetings.id, invitedFrom: meetings.invitedFrom, meetingUrl: meetings.meetingUrl })
+      .from(meetings)
+      .where(and(eq(meetings.userId, user.id), eq(meetings.startsAt, e.startsAt)));
+    const copy = theirs.find((m) => m.invitedFrom === sourceId);
+    if (copy) {
+      await db()
+        .update(meetings)
+        .set({ title: e.title, endsAt: e.endsAt, meetingUrl: e.meetingUrl, cancelled: e.cancelled })
+        .where(eq(meetings.id, copy.id));
+      continue;
+    }
+    // They already have this call (from their own calendar, another invite, or one they deleted).
+    if (theirs.some((m) => meetCode(m.meetingUrl) === meetCode(e.meetingUrl))) continue;
+    await db()
+      .insert(meetings)
+      .values({
+        userId: user.id,
+        invitedFrom: sourceId,
+        ...e,
+        externalEventId: null,
+        recordEnabled:
+          Boolean(user.consentedAt && user.autoRecord) && !e.cancelled && e.endsAt.getTime() > Date.now(),
+      });
+  }
+}
+
+/** Once the call is on the user's own calendar, the copy from someone else's invite is redundant. */
+async function dropInvitedCopies(userId: string, e: NormalizedEvent) {
+  const copies = await db()
+    .select({ id: meetings.id, meetingUrl: meetings.meetingUrl })
+    .from(meetings)
+    .where(
+      and(
+        eq(meetings.userId, userId),
+        eq(meetings.startsAt, e.startsAt),
+        isNotNull(meetings.invitedFrom),
+        isNull(meetings.deletedAt),
+      ),
+    );
+  const ids = copies.filter((m) => meetCode(m.meetingUrl) === meetCode(e.meetingUrl)).map((m) => m.id);
+  if (ids.length) await db().delete(meetings).where(inArray(meetings.id, ids));
 }
 
 export async function syncAll(userId: string) {

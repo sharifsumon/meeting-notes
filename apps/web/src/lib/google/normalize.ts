@@ -11,6 +11,12 @@ export type NormalizedEvent = {
   cancelled: boolean;
 };
 
+/** Everyone the event is for (organizer and guests, not rooms), lower-cased, for finding invited MinuteFlow users. */
+export function guestEmails(event: GoogleEvent): string[] {
+  const emails = [event.organizer?.email, ...(event.attendees ?? []).filter((a) => !a.resource).map((a) => a.email)];
+  return [...new Set(emails.filter((e): e is string => Boolean(e)).map((e) => e.toLowerCase()))];
+}
+
 /** Converts a Google event to our shape. All-day events are skipped (returns null). */
 export function normalizeGoogleEvent(event: GoogleEvent): NormalizedEvent | null {
   const start = event.start?.dateTime;

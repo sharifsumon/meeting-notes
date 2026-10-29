@@ -66,7 +66,8 @@ export default function PrivacyPage() {
       <p>
         You can see the meetings on your own calendars. When the same call is on another MinuteFlow user&apos;s calendar,
         only one notetaker joins, and everyone who had the call on their calendar can see its recording, transcript and
-        notes. The notetaker posts a message in the call&apos;s chat so the people in the call know it is recording.
+        notes. MinuteFlow users invited to the call (matched by the email address on their MinuteFlow account against
+        the invite&apos;s guest list) can see them too. The guest list is used only for this match. The notetaker posts a message in the call&apos;s chat so the people in the call know it is recording.
       </p>
 
       <h2>Keeping and deleting data</h2>

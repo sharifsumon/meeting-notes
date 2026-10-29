@@ -71,6 +71,13 @@
       "when": 1792384043361,
       "tag": "0009_user_gemini_key",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793268480145,
+      "tag": "0010_invited_copies",
+      "breakpoints": true
     }
   ]
 }

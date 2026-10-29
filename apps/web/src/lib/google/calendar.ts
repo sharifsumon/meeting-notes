@@ -21,6 +21,8 @@ export type GoogleEvent = {
   hangoutLink?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
+  organizer?: { email?: string };
+  attendees?: Array<{ email?: string; resource?: boolean }>;
   conferenceData?: {
     entryPoints?: Array<{ entryPointType: string; uri: string }>;
   };

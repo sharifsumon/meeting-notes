@@ -145,6 +145,9 @@ export const meetings = pgTable(
     // Another MinuteFlow user's bot recorded this call (it was on both calendars), so this meeting
     // shows that recording, transcript and notes instead of sending a second bot.
     sharedSessionId: uuid("shared_session_id").references((): AnyPgColumn => botSessions.id, { onDelete: "set null" }),
+    // A copy for a MinuteFlow user who was invited (matched by account email) to another user's
+    // calendar event, so they see the call's recording even without the event on their own calendar.
+    invitedFrom: uuid("invited_from").references((): AnyPgColumn => meetings.id, { onDelete: "cascade" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

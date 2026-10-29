@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeGoogleEvent } from "./normalize";
+import { guestEmails, normalizeGoogleEvent } from "./normalize";
 
 const base = {
   id: "evt1",
@@ -41,5 +41,17 @@ describe("normalizeGoogleEvent", () => {
 
   it("gives untitled events a placeholder title", () => {
     expect(normalizeGoogleEvent({ ...base, summary: "  " })?.title).toBe("(No title)");
+  });
+});
+
+describe("guestEmails", () => {
+  it("lists the organizer and guests once, lower-cased, without rooms", () => {
+    expect(
+      guestEmails({
+        id: "e",
+        organizer: { email: "Sharif@Example.com" },
+        attendees: [{ email: "sharif@example.com" }, { email: "Rafat@example.com" }, { email: "room@resource.calendar.google.com", resource: true }, {}],
+      }),
+    ).toEqual(["sharif@example.com", "rafat@example.com"]);
   });
 });
