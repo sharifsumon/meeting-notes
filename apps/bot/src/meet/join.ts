@@ -366,7 +366,12 @@ async function joinFromLobby(
   // the waiting text gone.
   const inCall = page.getByRole("button", { name: /leave call/i });
   const waiting = page.getByText(WAITING_TEXT);
-  const denied = page.getByText(/denied your request|no one responded to your request|you've been removed/i);
+  const denied = page.getByText(/denied your request|you've been removed/i);
+  // Meet drops a knock nobody answers after a few minutes; knocking again keeps the bot in the lobby.
+  const unanswered = page.getByText(/no one responded to your request/i);
+  const knockAgain = page.getByRole("button", { name: /ask to join|try again|join now/i });
+  let knocks = 1;
+  let waitedChecks = 0;
   const deadline = Date.now() + admitTimeoutMs;
   let outcome: "joined" | "denied" | "blocked" | "timeout" = "timeout";
   let inCallChecks = 0;
@@ -380,6 +385,12 @@ async function joinFromLobby(
       outcome = "blocked";
       break;
     }
+    if (await unanswered.first().isVisible().catch(() => false)) {
+      if (!(await knockAgain.first().click({ timeout: 5_000 }).then(() => true).catch(() => false))) break;
+      log(`Nobody answered; asked to join again (knock ${++knocks})`);
+      await sleep(3_000);
+      continue;
+    }
     const admitted =
       (await inCall.first().isVisible().catch(() => false)) && !(await waiting.first().isVisible().catch(() => false));
     // Two checks in a row, so a waiting-room screen that's still drawing doesn't count.
@@ -389,6 +400,7 @@ async function joinFromLobby(
       break;
     }
     if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
+    if (++waitedChecks % 300 === 0) log(`Still waiting in the lobby (${Math.round(waitedChecks / 60)} min)`);
     if (giveWay && ++checks % 10 === 0 && (await giveWay().catch(() => false))) {
       throw new JoinFailed("Stopped waiting to be let in: a call you sent the bot to needed it", "timeout");
     }

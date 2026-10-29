@@ -11,8 +11,9 @@ import { openRecording } from "./storage";
 const OVERRUN_MS = 60 * 60_000;
 // Calls often run past their calendar slot, so a bot that waited in the queue still goes this long after it.
 const LATE_JOIN_MS = 30 * 60_000;
-// Someone who sent the bot themselves is in the call to let it in, but may take a while to notice.
-const SENT_ADMIT_MS = 15 * 60_000;
+// Someone who sent the bot themselves decides: it waits until they let it in or deny it, while the
+// call can still be running, and at least this long.
+const SENT_ADMIT_MIN_MS = 15 * 60_000;
 
 /**
  * Everyone this call belongs to: the same event is often on several MinuteFlow calendars
@@ -79,7 +80,9 @@ export async function runBotSession(botSessionId: string) {
       // Follow the MinuteFlow users: leave shortly after the last of them does.
       ownerNames: await ownerNamesFor(meeting, ownerName),
       onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
-      admitTimeoutMs: sentByUser ? SENT_ADMIT_MS : undefined,
+      admitTimeoutMs: sentByUser
+        ? Math.max(SENT_ADMIT_MIN_MS, meeting.endsAt.getTime() + LATE_JOIN_MS - Date.now())
+        : undefined,
       // A calendar call nobody is letting the bot into makes way for a call someone sent the bot to.
       giveWay: sentByUser ? undefined : sentNowCallWaiting,
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),

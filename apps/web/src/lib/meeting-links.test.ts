@@ -57,9 +57,12 @@ describe("meetCode", () => {
 describe("completeMeetingLink", () => {
   it("accepts a Meet link without https, or the bare code", async () => {
     const { completeMeetingLink, detectMeetingLink } = await import("./meeting-links");
-    for (const typed of ["meet.google.com/qqj-qvck-fgd", " qqj-qvck-fgd ", "http://meet.google.com/qqj-qvck-fgd", "https://meet.google.com/qqj-qvck-fgd"]) {
+    for (const typed of ["meet.google.com/qqj-qvck-fgd", " qqj-qvck-fgd ", "http://meet.google.com/qqj-qvck-fgd", "https://meet.google.com/qqj-qvck-fgd", "https://meet.google.com/qqj-qvck-fgd/"]) {
       expect(detectMeetingLink(completeMeetingLink(typed))?.url).toBe("https://meet.google.com/qqj-qvck-fgd");
     }
+    expect(detectMeetingLink(completeMeetingLink("meet.google.com/qqj-qvck-fgd?authuser=0"))?.url).toBe(
+      "https://meet.google.com/qqj-qvck-fgd?authuser=0",
+    );
     expect(detectMeetingLink(completeMeetingLink("Transcom kickoff"))).toBeNull();
   });
 });
