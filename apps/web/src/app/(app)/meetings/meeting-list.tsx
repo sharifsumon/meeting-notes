@@ -107,9 +107,6 @@ function MeetingCard({ meeting: m }: { meeting: MeetingRow }) {
       <div className="ml-auto flex flex-none flex-wrap items-center gap-2">
         {canToggle && m.status === null && <SendBotNowButton meetingId={m.id} />}
         {canToggle && <RecordSwitch meetingId={m.id} enabled={m.recordEnabled} />}
-        <Link href={`/meetings/${m.id}`} className="btn-dark">
-          Open Details
-        </Link>
         {!busy && <DeleteMeetingButton meetingId={m.id} title={m.title} />}
       </div>
     </article>
