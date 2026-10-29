@@ -9,6 +9,8 @@ import { openRecording } from "./storage";
 
 // Stay at most this long past the scheduled end if people are still talking.
 const OVERRUN_MS = 60 * 60_000;
+// Calls often run past their calendar slot, so a bot that waited in the queue still goes this long after it.
+const LATE_JOIN_MS = 30 * 60_000;
 
 /**
  * Everyone this call belongs to: the same event is often on several MinuteFlow calendars
@@ -51,8 +53,8 @@ export async function runBotSession(botSessionId: string) {
     return;
   }
 
-  // With one bot per server, a call that overlaps another waits in the queue; once it is over there's nothing to join.
-  if (meeting.endsAt.getTime() <= Date.now()) {
+  // A call that overlaps others waits in the queue; well past its end there's nothing left to join.
+  if (meeting.endsAt.getTime() + LATE_JOIN_MS <= Date.now()) {
     await setStatus(botSessionId, { status: "cancelled", error: "Not recorded: the notetaker was busy with another call" });
     return;
   }
