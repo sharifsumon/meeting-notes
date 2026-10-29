@@ -207,6 +207,8 @@ export async function sendBotNow(link: string): Promise<ActionResult> {
       meetingUrl: detected.url,
       platform: detected.platform,
       recordEnabled: true,
+      // Goes to the front of the queue, like "Send bot now".
+      botRequestedAt: now,
     });
   revalidatePath("/meetings");
   return {};
