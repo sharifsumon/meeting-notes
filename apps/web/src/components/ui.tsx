@@ -74,12 +74,7 @@ export function PlatformChip({ platform }: { platform: MeetingPlatform | null })
 }
 
 export function Logo({ size = 32 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 36 36" aria-hidden="true">
-      <rect width="36" height="36" rx="10" fill="#0f172a" />
-      <path d="M11 20v-4M15 24V12M19 22v-8M23 19v-2" stroke="#f97316" strokeWidth="2.6" strokeLinecap="round" fill="none" />
-    </svg>
-  );
+  return <img src="/logo.png" width={size} height={size} alt="" aria-hidden="true" className="shrink-0 rounded-full" />;
 }
 
 type IconName = "meetings" | "calendar" | "settings" | "clock" | "back" | "download" | "spark" | "search" | "check" | "video" | "chevron-left" | "chevron-right" | "refresh" | "trash";
