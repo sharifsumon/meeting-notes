@@ -45,7 +45,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
             // which we need to sync calendars while the user is away.
             access_type: "offline",
             prompt: "consent",
-            include_granted_scopes: "true",
+            // No include_granted_scopes: it would add back calendar.readonly from older sign-ins, a scope
+            // Google never verified for us, and the consent screen would warn that the app is unverified.
           },
         },
       }),
