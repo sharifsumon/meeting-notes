@@ -64,15 +64,19 @@ function place(day: Date, items: MeetingRow[]): Placed[] {
   return placed;
 }
 
-export function WeekView({ week, meetings }: { week: number; meetings: MeetingRow[] }) {
+export function WeekView({ view, offset, meetings }: { view: "day" | "week"; offset: number; meetings: MeetingRow[] }) {
   const isClient = useSyncExternalStore(subscribeNoop, () => true, () => false);
   const [selectedId, setSelectedId] = useState<string>();
   if (!isClient) return null;
 
   const now = new Date();
-  const monday = startOfWeek(new Date(now.getFullYear(), now.getMonth(), now.getDate() + week * 7));
-  const days = Array.from({ length: 7 }, (_, i) => new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i));
-  const weekEnd = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
+  const isDay = view === "day";
+  const monday = isDay
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset)
+    : startOfWeek(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset * 7));
+  const days = Array.from({ length: isDay ? 1 : 7 }, (_, i) => new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i));
+  const weekEnd = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + days.length);
+  const step = (n: number) => (isDay ? `/calendar?view=day&d=${n}` : `/calendar?w=${n}`);
 
   const inWeek = meetings.filter((m) => new Date(m.startsAt) < weekEnd && new Date(m.endsAt) > monday);
   const byDay = days.map((d) => place(d, inWeek.filter((m) => sameDay(new Date(m.startsAt), d))));
@@ -95,17 +99,31 @@ export function WeekView({ week, meetings }: { week: number; meetings: MeetingRo
   return (
     <>
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="mr-3 text-[28px] font-extrabold tracking-[-0.02em]">{monthFmt.format(days[3]!)}</h1>
+        <h1 className="mr-3 text-[28px] font-extrabold tracking-[-0.02em]">
+          {isDay ? dayFmt.format(days[0]!) : monthFmt.format(days[3]!)}
+        </h1>
         <div className="flex gap-1.5">
-          <Link href={`/calendar?w=${week - 1}`} aria-label="Previous week" className="btn-outline w-11 px-0">
+          <Link href={step(offset - 1)} aria-label={isDay ? "Previous day" : "Previous week"} className="btn-outline w-11 px-0">
             <Icon name="chevron-left" strokeWidth={2.2} />
           </Link>
-          <Link href="/calendar" className="btn-outline">
+          <Link href={step(0)} className="btn-outline">
             Today
           </Link>
-          <Link href={`/calendar?w=${week + 1}`} aria-label="Next week" className="btn-outline w-11 px-0">
+          <Link href={step(offset + 1)} aria-label={isDay ? "Next day" : "Next week"} className="btn-outline w-11 px-0">
             <Icon name="chevron-right" strokeWidth={2.2} />
           </Link>
+        </div>
+        <div className="flex rounded-xl border border-line p-0.5 text-sm font-semibold">
+          {(["day", "week"] as const).map((v) => (
+            <Link
+              key={v}
+              href={v === "day" ? "/calendar?view=day" : "/calendar"}
+              aria-current={v === view ? "page" : undefined}
+              className={`rounded-[10px] px-3.5 py-1.5 ${v === view ? "bg-ink text-white" : "text-ink-3 hover:text-ink"}`}
+            >
+              {v === "day" ? "Day" : "Week"}
+            </Link>
+          ))}
         </div>
         <div className="ml-auto flex flex-wrap gap-3.5 text-[13px] text-ink-3">
           {(["google_meet", "zoom", "microsoft_teams"] as const).map((p) => (
@@ -119,7 +137,7 @@ export function WeekView({ week, meetings }: { week: number; meetings: MeetingRo
 
       <div className="flex flex-wrap items-start gap-5">
         <div className="card min-w-0 flex-[999_1_600px] overflow-x-auto">
-          <div className="grid min-w-[760px] grid-cols-[56px_repeat(7,minmax(0,1fr))]">
+          <div className={`grid ${isDay ? "grid-cols-[56px_minmax(0,1fr)]" : "min-w-[760px] grid-cols-[56px_repeat(7,minmax(0,1fr))]"}`}>
             <div className="border-b border-line" />
             {days.map((d) => {
               const today = sameDay(d, now);
@@ -186,7 +204,7 @@ export function WeekView({ week, meetings }: { week: number; meetings: MeetingRo
         </div>
 
         <aside className="card flex min-w-0 flex-[1_1_280px] flex-col gap-4 p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.06)]">
-          {selected ? <Selected key={selected.id} m={selected} now={now} /> : <p className="text-sm text-muted">No meetings this week.</p>}
+          {selected ? <Selected key={selected.id} m={selected} now={now} /> : <p className="text-sm text-muted">{isDay ? "No meetings this day." : "No meetings this week."}</p>}
         </aside>
       </div>
     </>
