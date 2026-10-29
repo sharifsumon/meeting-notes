@@ -9,7 +9,7 @@ import { redirect } from "next/navigation";
 import { env } from "@/env";
 import { encrypt } from "@/lib/crypto";
 import { db } from "@/lib/db";
-import { detectMeetingLink, meetCode } from "@/lib/meeting-links";
+import { completeMeetingLink, detectMeetingLink, meetCode } from "@/lib/meeting-links";
 import { GoogleReconnectRequired } from "@/lib/google/client";
 import { requireUserId } from "@/lib/session";
 import { syncAll, syncMeetings } from "@/lib/sync";
@@ -181,7 +181,7 @@ async function calendarMeetingFor(userId: string, url: string, now: Date) {
  */
 export async function sendBotNow(link: string): Promise<ActionResult> {
   const userId = await requireUserId();
-  const detected = detectMeetingLink(link.trim());
+  const detected = detectMeetingLink(completeMeetingLink(link));
   if (!detected) return { error: "That doesn't look like a meeting link." };
   if (detected.platform !== "google_meet") return { error: "Only Google Meet links are supported for now." };
 

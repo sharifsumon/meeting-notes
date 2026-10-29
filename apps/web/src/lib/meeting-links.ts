@@ -31,6 +31,19 @@ export function detectMeetingLink(...texts: Array<string | null | undefined>): D
   return null;
 }
 
+/**
+ * A link someone typed or pasted, completed into a full URL: "meet.google.com/abc-defg-hij" and the
+ * bare code "abc-defg-hij" become "https://meet.google.com/abc-defg-hij".
+ */
+export function completeMeetingLink(input: string): string {
+  const text = input.trim();
+  if (/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(text)) return `https://meet.google.com/${text}`;
+  if (/^(?:http:\/\/)?[\w.-]+\.(?:google\.com|microsoft\.com|live\.com|zoom\.us|webex\.com)\//i.test(text)) {
+    return `https://${text.replace(/^http:\/\//i, "")}`;
+  }
+  return text;
+}
+
 export function platformForUrl(url: string): MeetingPlatform {
   return detectMeetingLink(url)?.platform ?? "other";
 }
