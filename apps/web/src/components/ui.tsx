@@ -73,6 +73,18 @@ export function PlatformChip({ platform }: { platform: MeetingPlatform | null })
   );
 }
 
+/** Microsoft's four-square mark, for the sign-in buttons. */
+export function MicrosoftMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 21 21" aria-hidden="true">
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
+  );
+}
+
 export function Logo({ size = 32 }: { size?: number }) {
   return <img src="/logo.png" width={size} height={size} alt="" aria-hidden="true" className="shrink-0 rounded-full" />;
 }

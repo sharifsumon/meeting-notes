@@ -4,6 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { GoogleReconnectRequired } from "@/lib/google/client";
+import { MicrosoftReconnectRequired } from "@/lib/microsoft/client";
 import { recordedMeetings, upcomingMeetings } from "@/lib/meetings";
 import { requireUserId } from "@/lib/session";
 import { syncAll } from "@/lib/sync";
@@ -27,6 +28,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
       await syncAll(userId);
     } catch (err) {
       if (err instanceof GoogleReconnectRequired) redirect("/settings?reconnect=1");
+      if (err instanceof MicrosoftReconnectRequired) redirect("/settings?reconnect=microsoft");
       console.error("Initial calendar sync failed", err);
     }
   }

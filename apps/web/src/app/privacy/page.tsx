@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Privacy policy · MinuteFlow" };
 
 export default function PrivacyPage() {
   return (
-    <LegalPage title="Privacy policy" updated="18 October 2026">
+    <LegalPage title="Privacy policy" updated="29 October 2026">
       <p>
         MinuteFlow joins your Google Meet calls as a notetaker, records them, and writes transcripts, summaries and
         meeting minutes for you. This page explains what data we use, why, and how you control it.
@@ -14,11 +14,12 @@ export default function PrivacyPage() {
       <h2>Data we collect</h2>
       <ul>
         <li>
-          <strong>Your Google account basics:</strong> your name, email address and profile picture, used to sign you in.
+          <strong>Your account basics:</strong> your name, email address and (for Google) profile picture, from the
+          Google or Microsoft account you sign in with.
         </li>
         <li>
           <strong>Your calendar events (read-only):</strong> titles, start and end times, and Google Meet links of events
-          on the calendars you turn on. We use them to show your meetings and to know which calls the notetaker should
+          on the Google or Outlook calendars you turn on, plus the guest list&apos;s email addresses. We use them to show your meetings and to know which calls the notetaker should
           join. We never create, change or delete calendar events.
         </li>
         <li>
@@ -50,6 +51,14 @@ export default function PrivacyPage() {
         purpose, and we do not let any third party use it for that purpose.
       </p>
 
+      <h2>Microsoft user data</h2>
+      <p>
+        If you sign in with Microsoft, MinuteFlow asks Microsoft Graph for read-only access to your calendars
+        (Calendars.Read) and your basic profile (User.Read). We use it only to find and show your meetings, under the
+        same rules as Google data above: it is not shared with anyone else, never sent to an AI service, and never used
+        to train AI models.
+      </p>
+
       <h2>Services that process data for us</h2>
       <ul>
         <li>Deepgram turns recordings into transcripts.</li>
@@ -59,7 +68,7 @@ export default function PrivacyPage() {
         They process the data only to return results to us, and under their API terms they don&apos;t use it to train
         their models. If you add your own Gemini API key in Settings, your meetings are processed by Google Gemini
         under the terms of your own Google account instead. Data from your Google Calendar is never sent to any of
-        these services.
+        these services, and neither is data from your Microsoft calendar.
       </p>
 
       <h2>Who can see a meeting</h2>

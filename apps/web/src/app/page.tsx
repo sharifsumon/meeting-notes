@@ -2,17 +2,26 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/auth";
 import { LegalLinks } from "@/components/legal-page";
-import { Icon, Logo } from "@/components/ui";
+import { Icon, Logo, MicrosoftMark } from "@/components/ui";
+import { microsoftEnabled } from "@/env";
+import { MICROSOFT_PROVIDER } from "@/lib/microsoft/client";
 
 const POINTS = [
-  "Syncs with your Google Calendar",
+  "Syncs with your Google or Outlook calendar",
   "Read-only calendar access, never edits your events",
   "Recordings, transcripts and notes in one place",
 ];
 
-export default async function Home() {
+const SIGN_IN_ERRORS: Record<string, string> = {
+  OAuthAccountNotLinked:
+    "That email already has a MinuteFlow account. Sign in the way you did before, then connect the other account in Settings.",
+};
+
+export default async function Home({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { error } = await searchParams;
   const session = await auth();
-  if (session?.user) redirect("/meetings");
+  if (session?.user) redirect(error ? `/settings?error=${encodeURIComponent(error)}` : "/meetings");
+  const withMicrosoft = microsoftEnabled();
 
   return (
     <div className="flex min-h-screen flex-wrap">
@@ -46,8 +55,13 @@ export default async function Home() {
         <div className="card flex w-full max-w-[420px] flex-col gap-6 rounded-2xl p-9 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.06)]">
           <div className="flex flex-col gap-1.5">
             <h2 className="text-2xl font-bold tracking-[-0.02em]">Sign in to MinuteFlow</h2>
-            <p className="text-sm text-muted">Use the Google account your meetings live in.</p>
+            <p className="text-sm text-muted">Use the account your meetings live in.</p>
           </div>
+          {error && (
+            <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {SIGN_IN_ERRORS[error] ?? "Sign-in didn't finish. Please try again."}
+            </p>
+          )}
           <form
             action={async () => {
               "use server";
@@ -64,6 +78,25 @@ export default async function Home() {
               Continue with Google
             </button>
           </form>
+          {withMicrosoft && (
+            <form
+              className="-mt-3"
+              action={async () => {
+                "use server";
+                await signIn(MICROSOFT_PROVIDER, { redirectTo: "/meetings" });
+              }}
+            >
+              <button
+                type="submit"
+                className="flex min-h-12 w-full items-center gap-3 rounded-[10px] border border-line bg-white px-4 text-[15px] font-semibold hover:bg-page"
+              >
+                <span className="flex size-[26px] items-center justify-center">
+                  <MicrosoftMark size={18} />
+                </span>
+                Continue with Microsoft
+              </button>
+            </form>
+          )}
           <p className="text-[13px] leading-relaxed text-muted">
             We ask for read-only access to your calendar so we can see which meetings to join. See our{" "}
             <Link href="/privacy" className="text-accent underline">

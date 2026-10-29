@@ -11,6 +11,7 @@ import { encrypt } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { completeMeetingLink, detectMeetingLink, meetCode } from "@/lib/meeting-links";
 import { GoogleReconnectRequired } from "@/lib/google/client";
+import { MicrosoftReconnectRequired } from "@/lib/microsoft/client";
 import { requireUserId } from "@/lib/session";
 import { syncAll, syncMeetings } from "@/lib/sync";
 
@@ -22,8 +23,9 @@ async function runSync(fn: () => Promise<void>): Promise<ActionResult> {
     return {};
   } catch (err) {
     if (err instanceof GoogleReconnectRequired) redirect("/settings?reconnect=1");
+    if (err instanceof MicrosoftReconnectRequired) redirect("/settings?reconnect=microsoft");
     console.error("Calendar sync failed", err);
-    return { error: "Couldn't reach Google Calendar. Try again in a moment." };
+    return { error: "Couldn't reach your calendar. Try again in a moment." };
   }
 }
 
@@ -140,15 +142,16 @@ export async function giveConsent(formData: FormData) {
     .update(users)
     .set({ consentedAt: new Date(), consentVersion: CONSENT_VERSION, autoRecord: true })
     .where(eq(users.id, userId));
-  let reconnect = false;
+  let reconnect: string | null = null;
   try {
     await syncAll(userId);
   } catch (err) {
-    reconnect = err instanceof GoogleReconnectRequired;
-    if (!reconnect) console.error("Calendar sync after consent failed", err);
+    if (err instanceof GoogleReconnectRequired) reconnect = "1";
+    else if (err instanceof MicrosoftReconnectRequired) reconnect = "microsoft";
+    else console.error("Calendar sync after consent failed", err);
   }
   await recordUpcoming(userId);
-  redirect(reconnect ? "/settings?reconnect=1" : "/meetings");
+  redirect(reconnect ? `/settings?reconnect=${reconnect}` : "/meetings");
 }
 
 const AD_HOC_DURATION_MS = 2 * 60 * 60 * 1000;

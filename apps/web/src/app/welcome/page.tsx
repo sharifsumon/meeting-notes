@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { requireUserId } from "@/lib/session";
 
 const POINTS = [
-  "MinuteFlow reads your Google Calendar (read-only) to find your meetings.",
+  "MinuteFlow reads your Google or Outlook calendar (read-only) to find your meetings.",
   "A notetaker joins every Google Meet call on your calendar about a minute before it starts, and records it once the host lets it in.",
   "It posts a recording notice in the meeting chat when the chat allows it, leaves when you hang up, then writes a transcript and AI notes.",
   "You can skip any meeting with its own switch, or turn automatic recording off in Settings.",

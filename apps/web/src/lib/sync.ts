@@ -1,30 +1,31 @@
 import "server-only";
-import { calendars, meetings, users } from "@minuteflow/db";
+import { accounts, calendars, meetings, users } from "@minuteflow/db";
 import { and, eq, gte, inArray, isNotNull, isNull, lt, ne, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { listCalendars, listEvents } from "@/lib/google/calendar";
 import { GoogleApiError } from "@/lib/google/client";
 import { guestEmails, normalizeGoogleEvent, type NormalizedEvent } from "@/lib/google/normalize";
 import { meetCode } from "@/lib/meeting-links";
+import { listOutlookCalendars, listOutlookEvents } from "@/lib/microsoft/calendar";
+import { MICROSOFT_PROVIDER, MicrosoftApiError } from "@/lib/microsoft/client";
+import { normalizeOutlookEvent, outlookGuestEmails } from "@/lib/microsoft/normalize";
 
 const LOOKBACK_MS = 60 * 60 * 1000;
 const LOOKAHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** Refreshes the user's list of Google calendars. The primary calendar is enabled on first sight. */
-export async function syncCalendarList(userId: string) {
-  const remote = await listCalendars(userId);
+/** Which sign-in providers (google, microsoft-entra-id) the user has linked. */
+async function linkedProviders(userId: string) {
+  const rows = await db().select({ provider: accounts.provider }).from(accounts).where(eq(accounts.userId, userId));
+  return new Set(rows.map((r) => r.provider));
+}
+
+type RemoteCalendar = { externalId: string; name: string; isPrimary: boolean; timeZone: string | null };
+
+async function saveCalendars(userId: string, provider: "google" | "microsoft", remote: RemoteCalendar[]) {
   for (const cal of remote) {
     await db()
       .insert(calendars)
-      .values({
-        userId,
-        provider: "google",
-        externalId: cal.id,
-        name: cal.summaryOverride ?? cal.summary,
-        isPrimary: cal.primary ?? false,
-        enabled: cal.primary ?? false,
-        timeZone: cal.timeZone ?? null,
-      })
+      .values({ userId, provider, ...cal, enabled: cal.isPrimary })
       .onConflictDoUpdate({
         target: [calendars.userId, calendars.provider, calendars.externalId],
         set: {
@@ -34,6 +35,56 @@ export async function syncCalendarList(userId: string) {
         },
       });
   }
+}
+
+/**
+ * Refreshes the user's list of Google and Outlook calendars. The primary calendar is enabled on first sight.
+ * One account failing doesn't stop the other; the first error is rethrown afterwards.
+ */
+export async function syncCalendarList(userId: string) {
+  const linked = await linkedProviders(userId);
+  const errors: unknown[] = [];
+  if (linked.has("google") || !linked.has(MICROSOFT_PROVIDER)) {
+    try {
+      const remote = await listCalendars(userId);
+      await saveCalendars(
+        userId,
+        "google",
+        remote.map((c) => ({ externalId: c.id, name: c.summaryOverride ?? c.summary, isPrimary: c.primary ?? false, timeZone: c.timeZone ?? null })),
+      );
+    } catch (err) {
+      errors.push(err);
+    }
+  }
+  if (linked.has(MICROSOFT_PROVIDER)) {
+    try {
+      const remote = await listOutlookCalendars(userId);
+      await saveCalendars(
+        userId,
+        "microsoft",
+        remote.map((c) => ({ externalId: c.id, name: c.name, isPrimary: c.isDefaultCalendar ?? false, timeZone: null })),
+      );
+    } catch (err) {
+      errors.push(err);
+    }
+  }
+  if (errors.length) throw errors[0];
+}
+
+/** One calendar's events in our shape, with the guest emails used for sharing. */
+async function eventsOf(userId: string, cal: { provider: "google" | "microsoft"; externalId: string }, timeMin: Date, timeMax: Date) {
+  if (cal.provider === "microsoft") {
+    const listed = await listOutlookEvents(userId, cal.externalId, timeMin, timeMax);
+    return listed.flatMap((o) => {
+      const e = normalizeOutlookEvent(o);
+      return e ? [{ ...e, guests: outlookGuestEmails(o) }] : [];
+    });
+  }
+  const listed = await listEvents(userId, cal.externalId, timeMin, timeMax);
+  return listed.flatMap((g) => {
+    const e = normalizeGoogleEvent(g);
+    return e ? [{ ...e, guests: guestEmails(g) }] : [];
+  });
 }
 
 /** Pulls upcoming events from every enabled calendar into `meetings`. */
@@ -53,20 +104,19 @@ export async function syncMeetings(userId: string) {
   // Nothing is recorded automatically until the user has agreed to it.
   const autoRecord = Boolean(user?.consentedAt && user.autoRecord);
 
+  const failures: unknown[] = [];
   for (const cal of enabled) {
-    let listed;
+    let events;
     try {
-      listed = await listEvents(userId, cal.externalId, timeMin, timeMax);
+      events = await eventsOf(userId, cal, timeMin, timeMax);
     } catch (err) {
-      // One calendar Google won't list (removed, or free/busy only) shouldn't stop the others.
-      if (!(err instanceof GoogleApiError) || ![403, 404].includes(err.status)) throw err;
-      console.error(`Skipping calendar ${cal.id}: ${err.message}`);
+      // One calendar the provider won't list (removed, or free/busy only) shouldn't stop the others.
+      const status = err instanceof GoogleApiError || err instanceof MicrosoftApiError ? err.status : 0;
+      // Other failures (an account needing reconnecting) are reported after the remaining calendars sync.
+      if (![403, 404].includes(status)) failures.push(err);
+      else console.error(`Skipping calendar ${cal.id}: ${(err as Error).message}`);
       continue;
     }
-    const events = listed.flatMap((g) => {
-      const e = normalizeGoogleEvent(g);
-      return e ? [{ ...e, guests: guestEmails(g) }] : [];
-    });
 
     for (const { guests, ...e } of events) {
       const [row] = await db()
@@ -127,6 +177,7 @@ export async function syncMeetings(userId: string) {
 
     await db().update(calendars).set({ lastSyncedAt: new Date() }).where(eq(calendars.id, cal.id));
   }
+  if (failures.length) throw failures[0];
 }
 
 /**
@@ -139,7 +190,14 @@ async function copyForInvitedUsers(ownerId: string, sourceId: string, e: Normali
   const invited = await db()
     .select({ id: users.id, consentedAt: users.consentedAt, autoRecord: users.autoRecord })
     .from(users)
-    .where(and(ne(users.id, ownerId), inArray(sql`lower(${users.email})`, guests)));
+    .where(
+      and(
+        ne(users.id, ownerId),
+        inArray(sql`lower(${users.email})`, guests),
+        // Only Google-verified addresses: a Microsoft work account's email is set by its own organisation.
+        inArray(users.id, db().select({ id: accounts.userId }).from(accounts).where(eq(accounts.provider, "google"))),
+      ),
+    );
   for (const user of invited) {
     const theirs = await db()
       .select({ id: meetings.id, invitedFrom: meetings.invitedFrom, meetingUrl: meetings.meetingUrl })

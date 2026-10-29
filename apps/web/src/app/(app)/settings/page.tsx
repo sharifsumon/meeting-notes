@@ -4,14 +4,20 @@ import { signIn } from "@/auth";
 import { decrypt } from "@/lib/crypto";
 import { hasCalendarScope } from "@/lib/google/client";
 import { db } from "@/lib/db";
-import { env } from "@/env";
+import { env, microsoftEnabled } from "@/env";
+import { MicrosoftMark } from "@/components/ui";
+import { MICROSOFT_PROVIDER } from "@/lib/microsoft/client";
 import { requireUserId } from "@/lib/session";
 import { AutoRecordToggle, CalendarToggle } from "./calendar-toggle";
 import { GeminiKeyForm } from "./gemini-key";
 
-export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ reconnect?: string }> }) {
+const LINK_ERRORS: Record<string, string> = {
+  OAuthAccountNotLinked: "That account is already used by another MinuteFlow login, so it can't be connected here.",
+};
+
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ reconnect?: string; error?: string }> }) {
   const userId = await requireUserId();
-  const { reconnect } = await searchParams;
+  const { reconnect, error } = await searchParams;
 
   const rows = await db()
     .select()
@@ -28,6 +34,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     .where(and(eq(accounts.userId, userId), eq(accounts.provider, "google")))
     .limit(1);
   const calendarNotGranted = Boolean(google) && !hasCalendarScope(google!.scope);
+  const [microsoft] = await db()
+    .select({ provider: accounts.provider })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), eq(accounts.provider, MICROSOFT_PROVIDER)))
+    .limit(1);
+  const withMicrosoft = microsoftEnabled();
   // Only the last four characters ever reach the browser.
   let savedKeyEnd: string | null = null;
   try {
@@ -43,7 +55,29 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p className="mt-1.5 text-[15px] text-muted">Choose which calendars MinuteFlow watches, whether the notetaker records your calls on its own, and which Gemini key it uses.</p>
       </div>
 
-      {(reconnect || calendarNotGranted) && (
+      {error && (
+        <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {LINK_ERRORS[error] ?? "Connecting that account didn't finish. Please try again."}
+        </p>
+      )}
+
+      {reconnect === "microsoft" && (
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span>We lost access to your Outlook calendar. Reconnect Microsoft to keep it in sync.</span>
+          <form
+            action={async () => {
+              "use server";
+              await signIn(MICROSOFT_PROVIDER, { redirectTo: "/settings" });
+            }}
+          >
+            <button type="submit" className="shrink-0 font-medium underline underline-offset-4">
+              Reconnect Microsoft
+            </button>
+          </form>
+        </div>
+      )}
+
+      {((reconnect && reconnect !== "microsoft") || calendarNotGranted) && (
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span>
             {calendarNotGranted
@@ -62,6 +96,32 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </form>
         </div>
       )}
+
+      <section className="flex flex-col gap-3">
+        <h2 className="section-label">Accounts</h2>
+        <ul className="card divide-y divide-line-soft">
+          <AccountRow
+            name="Google"
+            mark={<span className="text-[15px] font-extrabold text-blue-600">G</span>}
+            connected={Boolean(google)}
+            connect={async () => {
+              "use server";
+              await signIn("google", { redirectTo: "/settings" });
+            }}
+          />
+          {(withMicrosoft || microsoft) && (
+            <AccountRow
+              name="Microsoft (Outlook / Teams)"
+              mark={<MicrosoftMark size={16} />}
+              connected={Boolean(microsoft)}
+              connect={async () => {
+                "use server";
+                await signIn(MICROSOFT_PROVIDER, { redirectTo: "/settings" });
+              }}
+            />
+          )}
+        </ul>
+      </section>
 
       <section className="flex flex-col gap-3">
         <h2 className="section-label">Recording</h2>
@@ -113,7 +173,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p className="text-muted">No calendars yet. Open Meetings and press Sync calendar.</p>
       ) : (
         <section className="flex flex-col gap-3">
-          <h2 className="section-label">Google Calendar</h2>
+          <h2 className="section-label">Calendars</h2>
           <ul className="card divide-y divide-line-soft">
           {rows.map((c) => (
             <li key={c.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
@@ -123,7 +183,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                   {c.isPrimary && <span className="pill ml-2 bg-accent-soft text-xs text-accent">Primary</span>}
                 </p>
                 <p className="mt-0.5 text-sm text-muted">
-                  Google Calendar
+                  {c.provider === "microsoft" ? "Outlook calendar" : "Google Calendar"}
                   {c.lastSyncedAt && ` · synced ${c.lastSyncedAt.toISOString().slice(0, 16).replace("T", " ")} UTC`}
                 </p>
               </div>
@@ -134,5 +194,25 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </section>
       )}
     </main>
+  );
+}
+
+function AccountRow({ name, mark, connected, connect }: { name: string; mark: React.ReactNode; connected: boolean; connect: () => Promise<void> }) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+      <span className="flex items-center gap-3 text-[15px] font-bold">
+        <span className="flex size-8 items-center justify-center rounded-full border border-line">{mark}</span>
+        {name}
+      </span>
+      {connected ? (
+        <span className="pill bg-green-50 font-medium text-green-800">Connected</span>
+      ) : (
+        <form action={connect}>
+          <button type="submit" className="btn-outline">
+            Connect
+          </button>
+        </form>
+      )}
+    </li>
   );
 }
