@@ -6,7 +6,6 @@ import { Icon, PLATFORM, StatusPill, SUPPORTED_PLATFORMS } from "@/components/ui
 import type { MeetingRow } from "@/lib/meetings";
 import { RecordSwitch } from "../meetings/record-switch";
 
-const HOUR_PX = 96;
 const subscribeNoop = () => () => {};
 
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
@@ -31,14 +30,14 @@ function hoursInto(day: Date, t: Date) {
   return Math.max(0, Math.min(24, (t.getTime() - day.getTime()) / 3_600_000));
 }
 
-type Placed = { m: MeetingRow; top: number; bottom: number; lane: number; lanes: number };
+type Placed = { m: MeetingRow; top: number; bottom: number; lane: number; lanes: number; span: number };
 
 /** Lays out one day's meetings side by side where they overlap. */
 function place(day: Date, items: MeetingRow[]): Placed[] {
   const placed: Placed[] = items
     .map((m) => {
       const top = hoursInto(day, new Date(m.startsAt));
-      return { m, top, bottom: Math.max(hoursInto(day, new Date(m.endsAt)), top + 0.25), lane: 0, lanes: 1 };
+      return { m, top, bottom: Math.max(hoursInto(day, new Date(m.endsAt)), top + 0.25), lane: 0, lanes: 1, span: 1 };
     })
     .sort((a, b) => a.top - b.top);
 
@@ -52,7 +51,15 @@ function place(day: Date, items: MeetingRow[]): Placed[] {
       ends[lane] = p.bottom;
       p.lane = lane;
     }
-    for (const p of cluster) p.lanes = ends.length;
+    // Like Google Calendar, a meeting widens into lanes to its right that are free while it runs.
+    for (const p of cluster) {
+      p.lanes = ends.length;
+      while (
+        p.lane + p.span < p.lanes &&
+        !cluster.some((q) => q.lane === p.lane + p.span && q.top < p.bottom && q.bottom > p.top)
+      )
+        p.span++;
+    }
     cluster = [];
   };
   for (const p of placed) {
@@ -71,6 +78,7 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
 
   const now = new Date();
   const isDay = view === "day";
+  const hourPx = isDay ? 144 : 96;
   const monday = isDay
     ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset)
     : startOfWeek(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset * 7));
@@ -91,7 +99,7 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
     }
   }
   const hours = Array.from({ length: last - first }, (_, i) => first + i);
-  const height = (last - first) * HOUR_PX;
+  const height = (last - first) * hourPx;
 
   const selected =
     inWeek.find((m) => m.id === selectedId) ?? inWeek.find((m) => new Date(m.endsAt) > now) ?? inWeek[0];
@@ -153,7 +161,7 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
             })}
             <div className="relative" style={{ height }}>
               {hours.map((h, i) => (
-                <span key={h} className="absolute right-2 -translate-y-1.5 text-[11px] text-muted" style={{ top: i * HOUR_PX }}>
+                <span key={h} className="absolute right-2 -translate-y-1.5 text-[11px] text-muted" style={{ top: i * hourPx }}>
                   {i === 0 ? "" : hourFmt.format(new Date(2000, 0, 1, h))}
                 </span>
               ))}
@@ -164,7 +172,7 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
                 className={`relative border-l border-line-soft ${sameDay(d, now) ? "bg-sky-50/40" : ""}`}
                 style={{
                   height,
-                  backgroundImage: `repeating-linear-gradient(to bottom, #eef2f6 0, #eef2f6 1px, transparent 1px, transparent ${HOUR_PX}px)`,
+                  backgroundImage: `repeating-linear-gradient(to bottom, #eef2f6 0, #eef2f6 1px, transparent 1px, transparent ${hourPx}px)`,
                 }}
               >
                 {byDay[di]!.map((p) => {
@@ -178,14 +186,14 @@ export function WeekView({ view, offset, meetings }: { view: "day" | "week"; off
                       aria-label={`${p.m.title}, ${timeFmt.format(new Date(p.m.startsAt))}`}
                       aria-pressed={on}
                       title={`${p.m.title}\n${timeFmt.format(new Date(p.m.startsAt))} – ${timeFmt.format(new Date(p.m.endsAt))}`}
-                      className={`absolute flex flex-col gap-0.5 overflow-hidden rounded-lg border px-1.5 py-1 text-left ${platform.tint} ${
+                      className={`absolute flex flex-col gap-0.5 overflow-hidden rounded-lg border px-1.5 text-left ${p.bottom - p.top < 0.6 ? "justify-center py-0" : "py-1"} ${platform.tint} ${
                         on ? "z-10 ring-2 ring-ink" : ""
                       }`}
                       style={{
-                        top: (p.top - first) * HOUR_PX + 1,
-                        height: (p.bottom - p.top) * HOUR_PX - 2,
+                        top: (p.top - first) * hourPx + 1,
+                        height: (p.bottom - p.top) * hourPx - 2,
                         left: `calc(${(p.lane / p.lanes) * 100}% + 3px)`,
-                        width: `calc(${100 / p.lanes}% - 6px)`,
+                        width: `calc(${(100 * p.span) / p.lanes}% - 6px)`,
                       }}
                     >
                       {p.bottom - p.top < 0.6 ? (
