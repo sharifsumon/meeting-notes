@@ -51,7 +51,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
   if (!row) notFound();
   const { meeting: m, bot } = row;
   const notLetIn = bot?.status === "failed" && wasNotLetIn(bot.error);
-  // Another MinuteFlow user's bot recorded this call; name whose, since it isn't this user's bot.
+  // One bot records a call for everyone in MinuteFlow who has it; this copy shares another user's recording.
   const shared = Boolean(bot && bot.meetingId !== m.id);
   const [recordedFor] = shared && bot
     ? await db()
@@ -91,7 +91,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
               </span>
               {shared && (
                 <span className="pill border border-line bg-page font-medium text-ink-3">
-                  Recorded by {recordedFor?.name ?? "another MinuteFlow user"}&apos;s notetaker
+                  {recordedFor?.name ? `Shared with ${recordedFor.name}` : "Shared recording"}
                 </span>
               )}
             </div>
