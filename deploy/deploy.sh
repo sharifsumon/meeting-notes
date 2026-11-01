@@ -56,14 +56,20 @@ curl -fsS http://127.0.0.1:3000/api/health && echo
 # Keep the other build folder for a quick rollback; remove the old single-folder build.
 rm -rf "$APP_DIR/apps/web/.next"
 
-# Restarting the bot ends any call it is recording (the audio so far is kept). Wait for calls to
-# finish first, up to BOT_WAIT_MINUTES (default 180).
+# Restarting the bot ends any call it is joining, waiting in or recording. Wait for them to finish,
+# up to BOT_WAIT_MINUTES (default 180); if the bot is still busy then, leave it running the old code
+# rather than cut a call. Run `systemctl restart meetingnotes-bot` once it's free.
 BUSY_SQL="select count(*) from bot_sessions where status in ('joining', 'waiting_room', 'recording')"
+busy=0
 for _ in $(seq "${BOT_WAIT_MINUTES:-180}"); do
   busy=$(psql "${DATABASE_URL%%\?*}" -tAc "$BUSY_SQL" 2>/dev/null || echo 0)
   [ "${busy:-0}" -eq 0 ] && break
   echo "Waiting for $busy bot call(s) to finish before restarting the bot..."
   sleep 60
 done
-systemctl restart meetingnotes-bot
+if [ "${busy:-0}" -eq 0 ]; then
+  systemctl restart meetingnotes-bot
+else
+  echo "Bot still busy with $busy call(s): NOT restarted. Restart meetingnotes-bot when it's free to load the new code."
+fi
 echo "Deployed $(as_app "git rev-parse --short HEAD") (web build in $NEXT_DIST_DIR)"
