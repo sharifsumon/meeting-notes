@@ -14,6 +14,8 @@ const LATE_JOIN_MS = 30 * 60_000;
 // Someone who sent the bot themselves decides: it waits until they let it in or deny it, while the
 // call can still be running, and at least this long.
 const SENT_ADMIT_MIN_MS = 15 * 60_000;
+// A calendar call waits for an answer until its scheduled end, and at least this long.
+const CALENDAR_ADMIT_MIN_MS = 5 * 60_000;
 
 /**
  * Everyone this call belongs to: the same event is often on several MinuteFlow calendars
@@ -80,9 +82,11 @@ export async function runBotSession(botSessionId: string) {
       // Follow the MinuteFlow users: leave shortly after the last of them does.
       ownerNames: await ownerNamesFor(meeting, ownerName),
       onWaitingRoom: () => setStatus(botSessionId, { status: "waiting_room" }),
+      // Leaving the lobby takes the host's admit prompt away, so the bot waits for an answer: calendar calls
+      // until their scheduled end, calls someone sent it to a little past that.
       admitTimeoutMs: sentByUser
         ? Math.max(SENT_ADMIT_MIN_MS, meeting.endsAt.getTime() + LATE_JOIN_MS - Date.now())
-        : undefined,
+        : Math.max(CALENDAR_ADMIT_MIN_MS, meeting.endsAt.getTime() - Date.now()),
       // A calendar call nobody is letting the bot into makes way for a call someone sent the bot to.
       giveWay: sentByUser ? undefined : sentNowCallWaiting,
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
