@@ -4,7 +4,7 @@ import { db } from "./db";
 import { JoinFailed, recordMeet } from "./meet/join";
 import { meetCode } from "./meet/links";
 import { botNameFor } from "./scheduler";
-import { sentNowCallWaiting } from "./queue";
+import { callWaiting, sentNowCallWaiting } from "./queue";
 import { openRecording } from "./storage";
 
 // Stay at most this long past the scheduled end if people are still talking.
@@ -16,6 +16,8 @@ const LATE_JOIN_MS = 30 * 60_000;
 const SENT_ADMIT_MIN_MS = 15 * 60_000;
 // A calendar call waits for an answer until its scheduled end, and at least this long.
 const CALENDAR_ADMIT_MIN_MS = 5 * 60_000;
+// A calendar call nobody has let the bot into for this long makes way for another call waiting for a bot.
+const CALENDAR_HOLD_MS = 10 * 60_000;
 
 /**
  * Everyone this call belongs to: the same event is often on several MinuteFlow calendars
@@ -73,6 +75,7 @@ export async function runBotSession(botSessionId: string) {
   const onChunk = (b64: string) => (writes = writes.then(() => recording.write(b64)));
 
   await setStatus(botSessionId, { status: "joining", recordingKey: recording.key });
+  const lobbySince = Date.now();
   try {
     const result = await recordMeet({
       url: meeting.meetingUrl,
@@ -87,8 +90,13 @@ export async function runBotSession(botSessionId: string) {
       admitTimeoutMs: sentByUser
         ? Math.max(SENT_ADMIT_MIN_MS, meeting.endsAt.getTime() + LATE_JOIN_MS - Date.now())
         : Math.max(CALENDAR_ADMIT_MIN_MS, meeting.endsAt.getTime() - Date.now()),
-      // A calendar call nobody is letting the bot into makes way for a call someone sent the bot to.
-      giveWay: sentByUser ? undefined : sentNowCallWaiting,
+      // A calendar call nobody is letting the bot into makes way for a call someone sent the bot to, and,
+      // once it has waited a while or its slot is over, for any other call (there are only a few bots).
+      giveWay: sentByUser
+        ? undefined
+        : async () =>
+            (await sentNowCallWaiting()) ||
+            ((Date.now() - lobbySince >= CALENDAR_HOLD_MS || Date.now() >= meeting.endsAt.getTime()) && (await callWaiting())),
       onAdmitted: (joinedAt) => setStatus(botSessionId, { status: "recording", joinedAt }),
       // A meeting sent by link gets the call's name from Meet.
       onTitle: (title) =>

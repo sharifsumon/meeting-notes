@@ -17,6 +17,11 @@ export const joinQueue = new Queue<JoinJob>(JOIN_QUEUE, { connection: redisConne
 export const PRIORITY_SENT_NOW = 1;
 export const PRIORITY_CALENDAR = 10;
 
+/** Whether any call is waiting for a free bot. */
+export async function callWaiting() {
+  return (await joinQueue.getJobs(["prioritized", "waiting"])).some(Boolean);
+}
+
 /** Whether a call someone sent the bot to right now is waiting for a free bot. */
 export async function sentNowCallWaiting() {
   const jobs = await joinQueue.getJobs(["prioritized", "waiting"]);

@@ -402,7 +402,7 @@ async function joinFromLobby(
     if (page.isClosed()) throw new JoinFailed("The lobby page closed", "error");
     if (++waitedChecks % 300 === 0) log(`Still waiting in the lobby (${Math.round(waitedChecks / 60)} min)`);
     if (giveWay && ++checks % 10 === 0 && (await giveWay().catch(() => false))) {
-      throw new JoinFailed("Stopped waiting to be let in: a call you sent the bot to needed it", "timeout");
+      throw new JoinFailed("Stopped waiting to be let in: another call needed the bot", "timeout");
     }
     await sleep(1_000);
   }
