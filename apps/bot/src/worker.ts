@@ -14,6 +14,8 @@ const LATE_JOIN_MS = 30 * 60_000;
 // Someone who sent the bot themselves decides: it waits until they let it in or deny it, while the
 // call can still be running, and at least this long.
 const SENT_ADMIT_MIN_MS = 15 * 60_000;
+// Out of the call this soon after being let in counts as removed, not as a recording.
+const SHORT_CALL_S = 60;
 // A calendar call waits for an answer until its scheduled end, and at least this long.
 const CALENDAR_ADMIT_MIN_MS = 5 * 60_000;
 // A calendar call nobody has let the bot into for this long makes way for another call waiting for a bot.
@@ -108,14 +110,22 @@ export async function runBotSession(botSessionId: string) {
     });
     await writes;
     log(`Recorded ${recording.bytes} bytes (${result.reason})`);
+    // Put out of the call within seconds of being let in: there's nothing worth notes.
+    const inCallS = Math.round((result.leftAt.getTime() - result.joinedAt.getTime()) / 1000);
+    const cutShort = ["meeting ended or bot removed", "no longer in the call"].includes(result.reason) && inCallS < SHORT_CALL_S;
+    const error = cutShort
+      ? `The notetaker was removed, or the call ended, ${inCallS} seconds after it was let in`
+      : recording.bytes > 0
+        ? null
+        : "No audio was captured";
     await setStatus(botSessionId, {
       // Transcription picks up sessions in "processing" (next milestone).
-      status: recording.bytes > 0 ? "processing" : "failed",
+      status: error ? "failed" : "processing",
       joinedAt: result.joinedAt,
       leftAt: result.leftAt,
       participants: result.participants,
       speakerTimeline: result.speakerTimeline,
-      error: recording.bytes > 0 ? null : "No audio was captured",
+      error,
     });
   } catch (err) {
     await writes.catch(() => {});

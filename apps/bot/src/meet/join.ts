@@ -226,9 +226,11 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
       const button = page.getByRole("button", { name }).first();
       if (await button.isVisible().catch(() => false)) await button.click({ timeout: 2_000 }).catch(() => {});
     }
-    // Captions first: lines spoken before they come on can't be named, and posting the notice can take a while.
-    await enableCaptions(page, log).catch((err) => log(`Could not turn on captions: ${err}`));
+    // Ask for captions straight away (lines spoken before they come on can't be named), then tell people
+    // the call is recorded before anything slower, then make sure captions took.
+    await requestCaptions(page).catch(() => {});
     await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
+    await enableCaptions(page, log).catch((err) => log(`Could not turn on captions: ${err}`));
     const title = await meetingTitle(page);
     if (title) await Promise.resolve(opts.onTitle?.(title)).catch((err) => log(`Title update failed: ${err}`));
     const seen = new Set<string>();
@@ -474,12 +476,23 @@ async function dismissPopups(page: Page) {
   }
 }
 
+/** One quick press of the captions button (or shortcut) without waiting to see it take. */
+async function requestCaptions(page: Page) {
+  await page.mouse.move(640, 600).catch(() => {});
+  if ((await captionsState(page)) !== "off") return;
+  const button = page.getByRole("button", { name: /turn on captions/i }).first();
+  if (await button.isVisible().catch(() => false)) await button.click({ timeout: 2_000 });
+  else await captionsShortcut(page);
+}
+
 async function enableCaptions(page: Page, log: (m: string) => void) {
   // The watcher polls for the captions area itself, so it's safe to start before captions show up.
   await page.evaluate(installCaptionWatcher);
   await dismissPopups(page);
   // Meet hides its toolbar, captions button included, until the mouse moves.
   await page.mouse.move(640, 600).catch(() => {});
+  // Give the early request a moment to take before pressing any toggle again.
+  await waitForCaptions(page, 3_000);
 
   // Each way of turning captions on is a toggle, so only try the next one once captions are
   // clearly still off. Meet can take several seconds to turn them on.
