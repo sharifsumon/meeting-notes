@@ -226,8 +226,9 @@ export async function recordMeet(opts: MeetSessionOptions): Promise<MeetRecordin
       const button = page.getByRole("button", { name }).first();
       if (await button.isVisible().catch(() => false)) await button.click({ timeout: 2_000 }).catch(() => {});
     }
-    await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
+    // Captions first: lines spoken before they come on can't be named, and posting the notice can take a while.
     await enableCaptions(page, log).catch((err) => log(`Could not turn on captions: ${err}`));
+    await announce(page, opts.botName, log).catch((err) => log(`Could not post consent message: ${err}`));
     const title = await meetingTitle(page);
     if (title) await Promise.resolve(opts.onTitle?.(title)).catch((err) => log(`Title update failed: ${err}`));
     const seen = new Set<string>();
@@ -498,7 +499,7 @@ async function enableCaptions(page: Page, log: (m: string) => void) {
     if (state === "on") return log("Captions on; noting who speaks");
     await attempt().catch(() => {});
     await page.keyboard.press("Escape").catch(() => {});
-    const after = await waitForCaptions(page, 10_000);
+    const after = await waitForCaptions(page, 5_000);
     if (after === "on") return log(`Captions on (${how}); noting who speaks`);
     if (after === "unknown") break; // can't tell; another toggle might turn them off again
   }
@@ -583,7 +584,7 @@ type EndOptions = {
   log: (m: string) => void;
 };
 
-const CAPTION_RETRY_MS = 15_000;
+const CAPTION_RETRY_MS = 10_000;
 
 async function waitForEnd(page: Page, { leaveBy, aloneTimeoutMs, owner, ownerGoneMs, seen, log }: EndOptions) {
   const inCall = page.getByRole("button", { name: /leave call/i });
