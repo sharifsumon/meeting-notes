@@ -3,6 +3,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AD_HOC_MEETING_TITLE, botSessions, calendars, meetings, notes, users } from "@minuteflow/db";
+import { sessionOf } from "@/lib/meetings";
 import { and, eq, gt, inArray, isNotNull, isNull, lte, ne, notInArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -306,5 +307,32 @@ export async function removeGeminiKey(): Promise<ActionResult> {
   const userId = await requireUserId();
   await db().update(users).set({ geminiApiKey: null }).where(eq(users.id, userId));
   revalidatePath("/settings");
+  return {};
+}
+
+/**
+ * Transcribes a recorded call again. The bot keeps the current transcript until the new one is
+ * saved, then writes the notes again. Everyone sharing the recording sees the new transcript.
+ */
+export async function regenerateTranscript(meetingId: string): Promise<ActionResult> {
+  const userId = await requireUserId();
+  const [row] = await db()
+    .select({ id: botSessions.id })
+    .from(meetings)
+    .innerJoin(botSessions, sessionOf())
+    .where(
+      and(
+        eq(meetings.id, meetingId),
+        eq(meetings.userId, userId),
+        isNull(meetings.deletedAt),
+        isNotNull(botSessions.recordingKey),
+        inArray(botSessions.status, ["completed", "failed"]),
+        isNull(botSessions.retranscribeRequestedAt),
+      ),
+    )
+    .limit(1);
+  if (!row) return { error: "This recording can't be transcribed again right now." };
+  await db().update(botSessions).set({ retranscribeRequestedAt: new Date(), error: null }).where(eq(botSessions.id, row.id));
+  revalidatePath(`/meetings/${meetingId}`);
   return {};
 }

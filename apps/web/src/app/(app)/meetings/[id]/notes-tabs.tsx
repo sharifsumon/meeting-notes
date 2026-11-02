@@ -16,6 +16,8 @@ type Props = {
   recorded: boolean;
   /** A transcript was saved, even if it has no lines. */
   transcribed: boolean;
+  /** "Regenerate" beside the search box, when the recording can be transcribed again. */
+  regenerate?: React.ReactNode;
 };
 
 const AVATAR = [
@@ -34,7 +36,7 @@ function clock(ms: number) {
 }
 
 // Notes always show in English; Bangla copies saved on older calls aren't offered.
-export function NotesTabs({ segments, recorded, transcribed, summary, decisions, keyPoints, actionItems, minutes }: Props) {
+export function NotesTabs({ segments, recorded, transcribed, summary, decisions, keyPoints, actionItems, minutes, regenerate }: Props) {
   const [tab, setTab] = useState<"summary" | "transcript" | "actions">("summary");
   const [query, setQuery] = useState("");
 
@@ -126,21 +128,24 @@ export function NotesTabs({ segments, recorded, transcribed, summary, decisions,
         <section className="card flex flex-col gap-[18px] p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold">Transcript</h2>
-            {segments.length > 0 && (
-              <div className="field min-h-10 flex-[0_1_260px] px-3">
-                <Icon name="search" size={16} className="text-muted" />
-                <label htmlFor="tsearch" className="sr-only">
-                  Search transcript
-                </label>
-                <input
-                  id="tsearch"
-                  type="search"
-                  placeholder="Search transcript"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
-            )}
+            <div className="flex flex-wrap items-start gap-2">
+              {segments.length > 0 && (
+                <div className="field min-h-10 flex-[0_1_260px] px-3">
+                  <Icon name="search" size={16} className="text-muted" />
+                  <label htmlFor="tsearch" className="sr-only">
+                    Search transcript
+                  </label>
+                  <input
+                    id="tsearch"
+                    type="search"
+                    placeholder="Search transcript"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </div>
+              )}
+              {regenerate}
+            </div>
           </div>
           {segments.length === 0 ? (
             <p className="text-[15px] leading-relaxed text-muted">{emptyTranscript}</p>

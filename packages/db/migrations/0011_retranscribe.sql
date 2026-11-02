@@ -1,0 +1,1 @@
+ALTER TABLE "bot_sessions" ADD COLUMN "retranscribe_requested_at" timestamp with time zone;

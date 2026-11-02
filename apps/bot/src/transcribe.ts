@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { botSessions, meetings, transcripts, users, type SpeakerTurn, type TranscriptSegment } from "@minuteflow/db";
+import { botSessions, meetings, notes, transcripts, users, type SpeakerTurn, type TranscriptSegment } from "@minuteflow/db";
 import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
 import { config } from "./config";
 import { db } from "./db";
@@ -249,10 +249,12 @@ export function banglaTranscriber(
 }
 
 const FAILED_PREFIX = "Transcription failed";
+/** Shown on the meeting when a requested re-transcription fails; the old transcript is kept. */
+export const REGENERATE_FAILED_PREFIX = "Regenerating the transcript failed";
 const attempts = new Map<string, number>();
 const MAX_ATTEMPTS = 3;
 
-/** Transcribes recorded sessions that don't have a transcript yet, one at a time. */
+/** Transcribes recorded sessions that don't have a transcript yet, or were asked to again, one at a time. */
 export async function transcribePending(providerFor: (geminiKey?: string) => TranscriptionProvider) {
   // Sessions transcribed before this step marked them done (the summary step does that when it's on).
   if (!notesOn()) {
@@ -273,6 +275,8 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
       key: botSessions.recordingKey,
       timeline: botSessions.speakerTimeline,
       participants: botSessions.participants,
+      meetingId: botSessions.meetingId,
+      again: botSessions.retranscribeRequestedAt,
       geminiKey: users.geminiApiKey,
     })
     .from(botSessions)
@@ -280,11 +284,14 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
     .innerJoin(users, eq(users.id, meetings.userId))
     .leftJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .where(
-      and(
-        eq(botSessions.status, "processing"),
-        isNotNull(botSessions.recordingKey),
-        isNull(transcripts.id),
-        or(isNull(botSessions.error), not(like(botSessions.error, `${FAILED_PREFIX}%`))),
+      or(
+        and(
+          eq(botSessions.status, "processing"),
+          isNotNull(botSessions.recordingKey),
+          isNull(transcripts.id),
+          or(isNull(botSessions.error), not(like(botSessions.error, `${FAILED_PREFIX}%`))),
+        ),
+        and(isNotNull(botSessions.retranscribeRequestedAt), isNotNull(botSessions.recordingKey)),
       ),
     )
     .limit(5);
@@ -298,6 +305,12 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
       const result = await provider.transcribe(audio, "audio/webm");
       const { language } = result;
       const segments = nameTranscript(result.segments, s.timeline, s.participants);
+      if (s.again) {
+        await saveRegenerated(s.id, s.meetingId, language, segments);
+        log(segments.length ? `Regenerated: ${segments.length} segments` : "Regenerated transcript was empty; kept the old one");
+        attempts.delete(s.id);
+        continue;
+      }
       await db.insert(transcripts).values({ botSessionId: s.id, language, segments }).onConflictDoNothing();
       // With AI notes on, the summary step marks the session done; empty transcripts have nothing to summarize.
       if (!notesOn() || segments.length === 0) {
@@ -312,10 +325,38 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
       if (n >= MAX_ATTEMPTS) {
         await db
           .update(botSessions)
-          .set({ error: `${FAILED_PREFIX}: ${String(err).slice(0, 300)}` })
+          .set(
+            s.again
+              ? { retranscribeRequestedAt: null, error: `${REGENERATE_FAILED_PREFIX}: ${String(err).slice(0, 300)}` }
+              : { error: `${FAILED_PREFIX}: ${String(err).slice(0, 300)}` },
+          )
           .where(eq(botSessions.id, s.id));
         attempts.delete(s.id);
       }
     }
   }
+}
+
+/**
+ * Replaces a call's transcript with a fresh one and drops its notes, so the summary step writes them
+ * again. An empty result keeps the old transcript.
+ */
+async function saveRegenerated(id: string, meetingId: string, language: string | null, segments: TranscriptSegment[]) {
+  await db.transaction(async (tx) => {
+    if (segments.length) {
+      await tx
+        .insert(transcripts)
+        .values({ botSessionId: id, language, segments })
+        .onConflictDoUpdate({ target: transcripts.botSessionId, set: { language, segments } });
+      if (notesOn()) await tx.delete(notes).where(eq(notes.meetingId, meetingId));
+    }
+    await tx
+      .update(botSessions)
+      .set({
+        retranscribeRequestedAt: null,
+        error: null,
+        status: segments.length && notesOn() ? "processing" : "completed",
+      })
+      .where(eq(botSessions.id, id));
+  });
 }

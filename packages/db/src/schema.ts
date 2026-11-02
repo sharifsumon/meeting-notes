@@ -191,6 +191,8 @@ export const botSessions = pgTable(
     speakerTimeline: jsonb("speaker_timeline").$type<SpeakerTurn[]>().notNull().default([]),
     // Names seen in the call's People list.
     participants: jsonb("participants").$type<string[]>().notNull().default([]),
+    // Someone asked to transcribe the recording again; the old transcript stays until the new one is saved.
+    retranscribeRequestedAt: timestamp("retranscribe_requested_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

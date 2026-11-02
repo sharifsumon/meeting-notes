@@ -12,6 +12,7 @@ import { DeleteMeetingButton } from "../delete-meeting";
 import { JoinMeetingLink, SendBotNowButton } from "../send-bot-now";
 import { AudioPlayer } from "./audio-player";
 import { NotesTabs } from "./notes-tabs";
+import { RegenerateTranscriptButton } from "./regenerate-transcript";
 
 const BOT_LABEL = {
   scheduled: "Will join at the start",
@@ -154,6 +155,15 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
             segments={transcript?.segments ?? []}
             recorded={hasRecording}
             transcribed={!!transcript}
+            regenerate={
+              // Once there's a transcript; while the notes are rewritten afterwards it stays busy.
+              hasRecording && bot && transcript && (bot.status === "completed" || bot.status === "processing" || bot.retranscribeRequestedAt) ? (
+                <RegenerateTranscriptButton
+                  meetingId={m.id}
+                  running={Boolean(bot.retranscribeRequestedAt) || bot.status === "processing"}
+                />
+              ) : undefined
+            }
           />
         </div>
         <aside className="flex min-w-0 flex-[1_1_280px] flex-col gap-5">
@@ -203,7 +213,7 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
                 </>
               )}
             </dl>
-            {(bot?.status === "failed" || bot?.status === "cancelled") && bot.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{bot.error}</p>}
+            {(bot?.status === "failed" || bot?.status === "cancelled" || bot?.error?.startsWith("Regenerating")) && bot.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{bot.error}</p>}
           </section>
         </aside>
       </div>
