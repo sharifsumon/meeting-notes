@@ -160,6 +160,34 @@ describe("nameSpeakers", () => {
     expect(pieces[0]!.name).toBe("A");
   });
 
+  it("moves a speaker change to the pause where the next person began", async () => {
+    const { splitByCaptions } = await import("./transcribe");
+    // Captions put the change a word late; the real change is the pause after "you".
+    const at = [0, 400, 800, 1_200, 1_600, 2_600, 3_000, 3_400, 3_800];
+    const words = "Hi Amir how are you Hello my friend yes".split(" ").map((text, i) => ({ text, startMs: at[i]!, endMs: at[i]! + 300 }));
+    const pieces = splitByCaptions(words, [
+      { name: "Sharif", startMs: 0, endMs: 2_500 },
+      { name: "Amir", startMs: 1_400, endMs: 4_500 },
+    ]);
+    expect(pieces.map((p) => [p.name, p.words.map((w) => w.text).join(" ")])).toEqual([
+      ["Sharif", "Hi Amir how are you"],
+      ["Amir", "Hello my friend yes"],
+    ]);
+  });
+
+  it("keeps a speaker until the next person's caption starts", async () => {
+    const { nameSpeakers } = await import("./transcribe");
+    const words = "one two three four five six".split(" ").map((text, i) => ({ text, startMs: 5_000 + i * 500, endMs: 5_400 + i * 500 }));
+    const named = nameSpeakers(
+      [{ speaker: "Speaker 1", startMs: 5_000, endMs: 7_900, text: words.map((w) => w.text).join(" "), words }],
+      [
+        { name: "Sharif", startMs: 0, endMs: 4_000 },
+        { name: "Amir", startMs: 9_000, endMs: 12_000 },
+      ],
+    );
+    expect(named.map((s) => s.speaker)).toEqual(["Sharif"]);
+  });
+
   it("leaves labels alone without captions", async () => {
     const { nameSpeakers } = await import("./transcribe");
     expect(nameSpeakers([seg("Speaker 1", 0, 1_000)], [])[0]!.speaker).toBe("Speaker 1");

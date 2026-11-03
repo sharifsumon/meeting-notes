@@ -153,7 +153,7 @@ export function NotesTabs({ segments, recorded, transcribed, summary, decisions,
             <p className="text-sm text-muted">No lines match “{query}”.</p>
           ) : (
             lines.map((l, i) => {
-              // Lines in a row from the same person read as one turn: name and picture only on the first.
+              // Lines in a row from the same person read as one turn: name, picture and time only on the first.
               const same = i > 0 && lines[i - 1]!.speaker === l.speaker;
               const time = (
                 <button
@@ -190,7 +190,6 @@ export function NotesTabs({ segments, recorded, transcribed, summary, decisions,
                       </div>
                     )}
                     <p className="text-[15px] leading-relaxed text-ink-2">
-                      {same && <span className="mr-2">{time}</span>}
                       {l.text}
                     </p>
                   </div>

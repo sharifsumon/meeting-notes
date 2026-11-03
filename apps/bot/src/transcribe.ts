@@ -192,27 +192,43 @@ export function nameSpeakers(segments: TimedSegment[], timeline: SpeakerTurn[]):
       }));
     }
     const { words: _words, ...line } = seg;
-    return [{ ...line, speaker: captionedName(seg, timeline) ?? fallback }];
+    return [{ ...line, speaker: pieces[0]?.name ?? captionedName(seg, timeline) ?? fallback }];
   });
 }
 
 /** Fewer words than this between two speaker changes are caption jitter, not a turn. */
 const MIN_PIECE_WORDS = 3;
+/** A caption turn counts as still going until the next one starts, up to this long after it ends. */
+const HOLD_MS = 10_000;
+/** How far a speaker change can move to land on a pause, since caption timing is only roughly right. */
+const SNAP_MS = 1_500;
 
 /**
- * Groups a line's words by the caption speaker at each word's midpoint (the shortest covering turn,
- * as in captionedName). Words no caption covers take their neighbours' speaker; tiny groups join the
- * one before them.
+ * A person is speaking from the moment their caption starts until someone else's starts (Meet keeps
+ * revising an earlier block after the next person begins, so its end time runs long). Turns can nest,
+ * as when one person's block stays open around another's, so the latest-started turn wins.
  */
-export function splitByCaptions(words: TimedWord[], timeline: SpeakerTurn[]): { name?: string; words: TimedWord[] }[] {
-  const nameAt = (ms: number) => {
-    let best: SpeakerTurn | undefined;
-    for (const turn of timeline) {
-      if (ms < turn.startMs || ms > turn.endMs) continue;
-      if (!best || turn.endMs - turn.startMs < best.endMs - best.startMs) best = turn;
-    }
+function speakerAt(timeline: SpeakerTurn[]) {
+  const turns = [...timeline].sort((a, b) => a.startMs - b.startMs);
+  const spans = turns.map((turn, i) => {
+    const next = turns.slice(i + 1).find((t) => t.name !== turn.name);
+    const held = next ? Math.min(next.startMs, turn.endMs + HOLD_MS) : turn.endMs;
+    return { name: turn.name, startMs: turn.startMs, endMs: Math.max(turn.endMs, held) };
+  });
+  return (ms: number) => {
+    let best: (typeof spans)[number] | undefined;
+    for (const span of spans) if (ms >= span.startMs && ms <= span.endMs && (!best || span.startMs >= best.startMs)) best = span;
     return best?.name;
   };
+}
+
+/**
+ * Groups a line's words by the caption speaker at each word's midpoint. Words no caption covers take
+ * their neighbours' speaker; tiny groups join the one before them; and each change of speaker moves to
+ * the longest pause near it, where one person stopped and the next began.
+ */
+export function splitByCaptions(words: TimedWord[], timeline: SpeakerTurn[]): { name?: string; words: TimedWord[] }[] {
+  const nameAt = speakerAt(timeline);
   const groups: { name?: string; words: TimedWord[] }[] = [];
   for (const w of words) {
     const name = nameAt((w.startMs + w.endMs) / 2);
@@ -232,7 +248,26 @@ export function splitByCaptions(words: TimedWord[], timeline: SpeakerTurn[]): { 
     const [first, second] = merged;
     merged.splice(0, 2, { name: second!.name, words: [...first!.words, ...second!.words] });
   }
+  for (let i = 1; i < merged.length; i++) snapToPause(merged[i - 1]!.words, merged[i]!.words);
   return merged;
+}
+
+/** Moves the boundary between two pieces to the longest gap between words within SNAP_MS of it. */
+function snapToPause(before: TimedWord[], after: TimedWord[]) {
+  const all = [...before, ...after];
+  const at = before.length;
+  const gap = (j: number) => all[j]!.startMs - all[j - 1]!.endMs;
+  const pivot = all[at]!.startMs;
+  let best = at;
+  for (let j = 1; j < all.length; j++) {
+    if (Math.abs(all[j]!.startMs - pivot) > SNAP_MS) continue;
+    // Each side keeps a real piece, so a pause can't swallow a whole turn.
+    if (j < Math.min(MIN_PIECE_WORDS, at) || all.length - j < Math.min(MIN_PIECE_WORDS, all.length - at)) continue;
+    if (gap(j) > gap(best) + 150 || (gap(j) === gap(best) && Math.abs(j - at) < Math.abs(best - at))) best = j;
+  }
+  if (best === at) return;
+  before.splice(0, before.length, ...all.slice(0, best));
+  after.splice(0, after.length, ...all.slice(best));
 }
 
 /**
