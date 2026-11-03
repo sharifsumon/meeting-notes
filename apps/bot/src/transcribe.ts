@@ -19,12 +19,23 @@ export interface TranscriptionProvider {
 type DeepgramResponse = {
   results?: {
     channels?: { detected_language?: string; language_confidence?: number; alternatives?: { confidence?: number }[] }[];
-    utterances?: { start: number; end: number; transcript: string; speaker?: number; confidence?: number }[];
+    utterances?: {
+      start: number;
+      end: number;
+      transcript: string;
+      speaker?: number;
+      confidence?: number;
+      words?: { word: string; punctuated_word?: string; start: number; end: number }[];
+    }[];
   };
 };
 
+/** A word's timing, kept while naming speakers so a line can be split where the captions change speaker. Not saved. */
+export type TimedWord = { text: string; startMs: number; endMs: number };
+type TimedSegment = TranscriptSegment & { words?: TimedWord[] };
+
 /** Parses Deepgram's pre-recorded response (with utterances and diarization) into our segments. */
-export function deepgramSegments(body: DeepgramResponse): TranscriptSegment[] {
+export function deepgramSegments(body: DeepgramResponse): TimedSegment[] {
   return (body.results?.utterances ?? [])
     .filter((u) => u.transcript.trim())
     .map((u) => ({
@@ -32,6 +43,11 @@ export function deepgramSegments(body: DeepgramResponse): TranscriptSegment[] {
       startMs: Math.round(u.start * 1000),
       endMs: Math.round(u.end * 1000),
       text: u.transcript.trim(),
+      words: u.words?.map((w) => ({
+        text: w.punctuated_word ?? w.word,
+        startMs: Math.round(w.start * 1000),
+        endMs: Math.round(w.end * 1000),
+      })),
     }));
 }
 
@@ -137,8 +153,8 @@ export function deepgram(apiKey: string, extraLanguages: string[] = [], bangla?:
  * time. Each label gets the name it overlaps most, one name per label; labels with no clear
  * match stay numbered.
  */
-export function nameSpeakers(segments: TranscriptSegment[], timeline: SpeakerTurn[]): TranscriptSegment[] {
-  if (!timeline.length) return segments;
+export function nameSpeakers(segments: TimedSegment[], timeline: SpeakerTurn[]): TranscriptSegment[] {
+  if (!timeline.length) return segments.map(({ words: _words, ...line }) => line);
   const overlap = new Map<string, Map<string, number>>();
   for (const seg of segments) {
     for (const turn of timeline) {
@@ -162,8 +178,61 @@ export function nameSpeakers(segments: TranscriptSegment[], timeline: SpeakerTur
     names.set(p.label, p.name);
     used.add(p.name);
   }
-  // Diarization can hear two people as one voice; the captions name each line's speaker directly.
-  return segments.map((seg) => ({ ...seg, speaker: captionedName(seg, timeline) ?? names.get(seg.speaker) ?? seg.speaker }));
+  // Diarization can hear two people as one voice and run a quick exchange into one line; the captions
+  // name each stretch of words directly.
+  return segments.flatMap((seg) => {
+    const fallback = names.get(seg.speaker) ?? seg.speaker;
+    const pieces = seg.words?.length ? splitByCaptions(seg.words, timeline) : [];
+    if (pieces.length > 1) {
+      return pieces.map((p) => ({
+        speaker: p.name ?? fallback,
+        startMs: p.words[0]!.startMs,
+        endMs: p.words[p.words.length - 1]!.endMs,
+        text: p.words.map((w) => w.text).join(" "),
+      }));
+    }
+    const { words: _words, ...line } = seg;
+    return [{ ...line, speaker: captionedName(seg, timeline) ?? fallback }];
+  });
+}
+
+/** Fewer words than this between two speaker changes are caption jitter, not a turn. */
+const MIN_PIECE_WORDS = 3;
+
+/**
+ * Groups a line's words by the caption speaker at each word's midpoint (the shortest covering turn,
+ * as in captionedName). Words no caption covers take their neighbours' speaker; tiny groups join the
+ * one before them.
+ */
+export function splitByCaptions(words: TimedWord[], timeline: SpeakerTurn[]): { name?: string; words: TimedWord[] }[] {
+  const nameAt = (ms: number) => {
+    let best: SpeakerTurn | undefined;
+    for (const turn of timeline) {
+      if (ms < turn.startMs || ms > turn.endMs) continue;
+      if (!best || turn.endMs - turn.startMs < best.endMs - best.startMs) best = turn;
+    }
+    return best?.name;
+  };
+  const groups: { name?: string; words: TimedWord[] }[] = [];
+  for (const w of words) {
+    const name = nameAt((w.startMs + w.endMs) / 2);
+    const last = groups[groups.length - 1];
+    if (last && (name === last.name || name === undefined)) last.words.push(w);
+    else if (last && last.name === undefined) Object.assign(last, { name, words: [...last.words, w] });
+    else groups.push({ name, words: [w] });
+  }
+  const merged: typeof groups = [];
+  for (const g of groups) {
+    const prev = merged[merged.length - 1];
+    if (prev && (g.words.length < MIN_PIECE_WORDS || g.name === prev.name)) prev.words.push(...g.words);
+    else merged.push({ ...g, words: [...g.words] });
+  }
+  // A short opening piece belongs with what follows.
+  if (merged.length > 1 && merged[0]!.words.length < MIN_PIECE_WORDS) {
+    const [first, second] = merged;
+    merged.splice(0, 2, { name: second!.name, words: [...first!.words, ...second!.words] });
+  }
+  return merged;
 }
 
 /**
