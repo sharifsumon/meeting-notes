@@ -152,33 +152,51 @@ export function NotesTabs({ segments, recorded, transcribed, summary, decisions,
           ) : lines.length === 0 ? (
             <p className="text-sm text-muted">No lines match “{query}”.</p>
           ) : (
-            lines.map((l, i) => (
-              <div key={`${l.startMs}-${i}`} className="flex items-start gap-3.5">
-                <span
-                  className={`flex size-8 flex-none items-center justify-center rounded-full text-xs font-bold ${
-                    AVATAR[speakers.indexOf(l.speaker) % AVATAR.length]
-                  }`}
+            lines.map((l, i) => {
+              // Lines in a row from the same person read as one turn: name and picture only on the first.
+              const same = i > 0 && lines[i - 1]!.speaker === l.speaker;
+              const time = (
+                <button
+                  type="button"
+                  onClick={() => seekAudio(l.startMs)}
+                  aria-label={`Play from ${clock(l.startMs)}`}
+                  className="text-[13px] text-accent tabular-nums hover:underline"
                 >
-                  {/^speaker (\d+)$/i.exec(l.speaker)?.[1]
-                    ? `S${/\d+$/.exec(l.speaker)![0]}`
-                    : l.speaker.slice(0, 2).toUpperCase()}
-                </span>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex items-baseline gap-2.5">
-                    <span className="text-sm font-bold">{l.speaker}</span>
-                    <button
-                      type="button"
-                      onClick={() => seekAudio(l.startMs)}
-                      aria-label={`Play from ${clock(l.startMs)}`}
-                      className="text-[13px] text-accent tabular-nums hover:underline"
+                  {clock(l.startMs)}
+                </button>
+              );
+              return (
+                <div key={`${l.startMs}-${i}`} className={`flex items-start gap-3.5 ${same ? "-mt-3" : ""}`}>
+                  {same ? (
+                    <span className="size-8 flex-none" aria-hidden="true" />
+                  ) : (
+                    <span
+                      className={`flex size-8 flex-none items-center justify-center rounded-full text-xs font-bold ${
+                        AVATAR[speakers.indexOf(l.speaker) % AVATAR.length]
+                      }`}
                     >
-                      {clock(l.startMs)}
-                    </button>
+                      {/^speaker (\d+)$/i.exec(l.speaker)?.[1]
+                        ? `S${/\d+$/.exec(l.speaker)![0]}`
+                        : l.speaker.slice(0, 2).toUpperCase()}
+                    </span>
+                  )}
+                  <div className="flex min-w-0 flex-col gap-1">
+                    {same ? (
+                      <span className="sr-only">{l.speaker}</span>
+                    ) : (
+                      <div className="flex items-baseline gap-2.5">
+                        <span className="text-sm font-bold">{l.speaker}</span>
+                        {time}
+                      </div>
+                    )}
+                    <p className="text-[15px] leading-relaxed text-ink-2">
+                      {same && <span className="mr-2">{time}</span>}
+                      {l.text}
+                    </p>
                   </div>
-                  <p className="text-[15px] leading-relaxed text-ink-2">{l.text}</p>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </section>
       )}
