@@ -85,6 +85,13 @@
       "when": 1793597616306,
       "tag": "0011_retranscribe",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793786605929,
+      "tag": "0012_retranscribe_requester",
+      "breakpoints": true
     }
   ]
 }

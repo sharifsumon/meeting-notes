@@ -1,0 +1,2 @@
+ALTER TABLE "bot_sessions" ADD COLUMN "retranscribe_requested_by" text;--> statement-breakpoint
+ALTER TABLE "bot_sessions" ADD CONSTRAINT "bot_sessions_retranscribe_requested_by_users_id_fk" FOREIGN KEY ("retranscribe_requested_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;

@@ -193,6 +193,8 @@ export const botSessions = pgTable(
     participants: jsonb("participants").$type<string[]>().notNull().default([]),
     // Someone asked to transcribe the recording again; the old transcript stays until the new one is saved.
     retranscribeRequestedAt: timestamp("retranscribe_requested_at", { withTimezone: true }),
+    // Who asked; their Gemini key is used for it, falling back to the recording owner's.
+    retranscribeRequestedBy: text("retranscribe_requested_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

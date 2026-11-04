@@ -332,7 +332,7 @@ export async function regenerateTranscript(meetingId: string): Promise<ActionRes
     )
     .limit(1);
   if (!row) return { error: "This recording can't be transcribed again right now." };
-  await db().update(botSessions).set({ retranscribeRequestedAt: new Date(), error: null }).where(eq(botSessions.id, row.id));
+  await db().update(botSessions).set({ retranscribeRequestedAt: new Date(), retranscribeRequestedBy: userId, error: null }).where(eq(botSessions.id, row.id));
   revalidatePath(`/meetings/${meetingId}`);
   return {};
 }

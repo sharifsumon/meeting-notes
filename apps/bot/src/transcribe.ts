@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { botSessions, meetings, notes, transcripts, users, type SpeakerTurn, type TranscriptSegment } from "@minuteflow/db";
 import { and, eq, inArray, isNotNull, isNull, like, not, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { config } from "./config";
 import { db } from "./db";
 import { fullName, isBotName } from "./meet/names";
@@ -396,6 +397,7 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
       );
   }
 
+  const requester = alias(users, "requester");
   const pending = await db
     .select({
       id: botSessions.id,
@@ -405,10 +407,12 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
       meetingId: botSessions.meetingId,
       again: botSessions.retranscribeRequestedAt,
       geminiKey: users.geminiApiKey,
+      requesterKey: requester.geminiApiKey,
     })
     .from(botSessions)
     .innerJoin(meetings, eq(meetings.id, botSessions.meetingId))
     .innerJoin(users, eq(users.id, meetings.userId))
+    .leftJoin(requester, eq(requester.id, botSessions.retranscribeRequestedBy))
     .leftJoin(transcripts, eq(transcripts.botSessionId, botSessions.id))
     .where(
       or(
@@ -426,7 +430,8 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
   for (const s of pending) {
     const log = (msg: string) => console.log(`[transcribe ${s.id}] ${msg}`);
     try {
-      const provider = providerFor(ownGeminiKey(s.geminiKey));
+      // Regenerate uses the Gemini key of whoever pressed it (a shared copy's viewer), else the owner's.
+      const provider = providerFor((s.again && ownGeminiKey(s.requesterKey)) || ownGeminiKey(s.geminiKey));
       const audio = await readFile(path.join(config.STORAGE_DIR, s.key!));
       log(`Sending ${audio.length} bytes to ${provider.name}`);
       const result = await provider.transcribe(audio, "audio/webm");
@@ -454,7 +459,7 @@ export async function transcribePending(providerFor: (geminiKey?: string) => Tra
           .update(botSessions)
           .set(
             s.again
-              ? { retranscribeRequestedAt: null, error: `${REGENERATE_FAILED_PREFIX}: ${String(err).slice(0, 300)}` }
+              ? { retranscribeRequestedAt: null, retranscribeRequestedBy: null, error: `${REGENERATE_FAILED_PREFIX}: ${String(err).slice(0, 300)}` }
               : { error: `${FAILED_PREFIX}: ${String(err).slice(0, 300)}` },
           )
           .where(eq(botSessions.id, s.id));
@@ -481,6 +486,7 @@ async function saveRegenerated(id: string, meetingId: string, language: string |
       .update(botSessions)
       .set({
         retranscribeRequestedAt: null,
+        retranscribeRequestedBy: null,
         error: null,
         status: segments.length && notesOn() ? "processing" : "completed",
       })
