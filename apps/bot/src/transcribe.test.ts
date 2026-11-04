@@ -188,6 +188,22 @@ describe("nameSpeakers", () => {
     expect(named.map((s) => s.speaker)).toEqual(["Sharif"]);
   });
 
+  it("splits a Bangla line that has no word times where the captions change speaker", async () => {
+    const { nameSpeakers } = await import("./transcribe");
+    // Like the call with Shihab: Whisper wrote one long line across both speakers.
+    const text = "আমার কাছে মনে হচ্ছে ভাই ভ্যালিড খুবই ভ্যালিড পয়েন্ট আমার মনে হয় তাহলে আমরা ভাইয়ের সাথে আরেকবার একটু ডিসকাস করি";
+    const named = nameSpeakers(
+      [{ speaker: "Speaker 1", startMs: 160_000, endMs: 172_000, text }],
+      [
+        { name: "Shihab Bhuiyan", startMs: 150_000, endMs: 166_000 },
+        { name: "Mohammed Shariful Islam", startMs: 165_500, endMs: 180_000 },
+      ],
+    );
+    expect(named.map((s) => s.speaker)).toEqual(["Shihab Bhuiyan", "Mohammed Shariful Islam"]);
+    expect(named.map((s) => s.text).join(" ")).toBe(text);
+    expect(named[1]!.startMs).toBeGreaterThan(165_000);
+  });
+
   it("leaves labels alone without captions", async () => {
     const { nameSpeakers } = await import("./transcribe");
     expect(nameSpeakers([seg("Speaker 1", 0, 1_000)], [])[0]!.speaker).toBe("Speaker 1");

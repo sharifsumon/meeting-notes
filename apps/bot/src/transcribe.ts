@@ -182,7 +182,8 @@ export function nameSpeakers(segments: TimedSegment[], timeline: SpeakerTurn[]):
   // name each stretch of words directly.
   return segments.flatMap((seg) => {
     const fallback = names.get(seg.speaker) ?? seg.speaker;
-    const pieces = seg.words?.length ? splitByCaptions(seg.words, timeline) : [];
+    const words = seg.words?.length ? seg.words : estimateWords(seg);
+    const pieces = words.length ? splitByCaptions(words, timeline) : [];
     if (pieces.length > 1) {
       return pieces.map((p) => ({
         speaker: p.name ?? fallback,
@@ -193,6 +194,22 @@ export function nameSpeakers(segments: TimedSegment[], timeline: SpeakerTurn[]):
     }
     const { words: _words, ...line } = seg;
     return [{ ...line, speaker: pieces[0]?.name ?? captionedName(seg, timeline) ?? fallback }];
+  });
+}
+
+/**
+ * Word times for a line whose transcriber gave only the line's start and end (Whisper and Gemini, used
+ * for Bangla calls), spread by each word's length so a line can still be split where the speaker changed.
+ */
+export function estimateWords(seg: TranscriptSegment): TimedWord[] {
+  const texts = seg.text.split(/\s+/).filter(Boolean);
+  const total = texts.reduce((n, t) => n + t.length + 1, 0);
+  const span = Math.max(0, seg.endMs - seg.startMs);
+  let at = 0;
+  return texts.map((text) => {
+    const startMs = seg.startMs + Math.round((at / total) * span);
+    at += text.length + 1;
+    return { text, startMs, endMs: seg.startMs + Math.round((at / total) * span) };
   });
 }
 
