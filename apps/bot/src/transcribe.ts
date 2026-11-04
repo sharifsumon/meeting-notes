@@ -215,27 +215,33 @@ export function estimateWords(seg: TranscriptSegment): TimedWord[] {
 
 /** Fewer words than this between two speaker changes are caption jitter, not a turn. */
 const MIN_PIECE_WORDS = 3;
-/** A caption turn counts as still going until the next one starts, up to this long after it ends. */
-const HOLD_MS = 10_000;
+/** A caption turn counts as still going this long after it last changed. */
+const HOLD_MS = 2_000;
+/** Speech in a caption gap shorter than this goes to the person whose caption ends the gap. */
+const GAP_MS = 20_000;
 /** How far a speaker change can move to land on a pause, since caption timing is only roughly right. */
 const SNAP_MS = 1_500;
 
 /**
- * A person is speaking from the moment their caption starts until someone else's starts (Meet keeps
- * revising an earlier block after the next person begins, so its end time runs long). Turns can nest,
- * as when one person's block stays open around another's, so the latest-started turn wins.
+ * Who the captions say was speaking at a moment. Turns can nest, as when one person's block stays open
+ * around another's, so the latest-started turn wins. Meet shows a new speaker's caption late, and a
+ * speaker's own block keeps growing while they talk, so speech in a gap between captions belongs to the
+ * person whose caption comes next.
  */
 function speakerAt(timeline: SpeakerTurn[]) {
-  const turns = [...timeline].sort((a, b) => a.startMs - b.startMs);
-  const spans = turns.map((turn, i) => {
-    const next = turns.slice(i + 1).find((t) => t.name !== turn.name);
-    const held = next ? Math.min(next.startMs, turn.endMs + HOLD_MS) : turn.endMs;
-    return { name: turn.name, startMs: turn.startMs, endMs: Math.max(turn.endMs, held) };
-  });
-  return (ms: number) => {
-    let best: (typeof spans)[number] | undefined;
-    for (const span of spans) if (ms >= span.startMs && ms <= span.endMs && (!best || span.startMs >= best.startMs)) best = span;
+  const spans = [...timeline].sort((a, b) => a.startMs - b.startMs);
+  const latestCovering = (ms: number, holdMs: number) => {
+    let best: SpeakerTurn | undefined;
+    for (const span of spans) if (ms >= span.startMs && ms <= span.endMs + holdMs && (!best || span.startMs >= best.startMs)) best = span;
     return best?.name;
+  };
+  return (ms: number) => {
+    const named = latestCovering(ms, 0) ?? latestCovering(ms, HOLD_MS);
+    if (named) return named;
+    // Nobody is known before the first caption or after the last one.
+    const before = spans.filter((s) => s.endMs < ms).at(-1);
+    const after = spans.find((s) => s.startMs > ms);
+    return before && after && after.startMs - before.endMs <= GAP_MS ? after.name : undefined;
   };
 }
 

@@ -175,17 +175,19 @@ describe("nameSpeakers", () => {
     ]);
   });
 
-  it("keeps a speaker until the next person's caption starts", async () => {
-    const { nameSpeakers } = await import("./transcribe");
-    const words = "one two three four five six".split(" ").map((text, i) => ({ text, startMs: 5_000 + i * 500, endMs: 5_400 + i * 500 }));
-    const named = nameSpeakers(
-      [{ speaker: "Speaker 1", startMs: 5_000, endMs: 7_900, text: words.map((w) => w.text).join(" "), words }],
-      [
-        { name: "Sharif", startMs: 0, endMs: 4_000 },
-        { name: "Amir", startMs: 9_000, endMs: 12_000 },
-      ],
-    );
-    expect(named.map((s) => s.speaker)).toEqual(["Sharif"]);
+  it("gives speech in a caption gap to the person whose caption comes next", async () => {
+    const { splitByCaptions } = await import("./transcribe");
+    // Like the call with Shihab: no captions for ten seconds while Sharif spoke, then his caption appeared late.
+    const at = [0, 400, 800, 1_200, 1_600, 2_000, 2_400, 4_000, 4_400, 4_800, 5_200, 5_600, 6_000];
+    const words = at.map((ms, i) => ({ text: `w${i}`, startMs: 160_000 + ms, endMs: 160_000 + ms + 300 }));
+    const pieces = splitByCaptions(words, [
+      { name: "Shihab", startMs: 150_000, endMs: 161_000 },
+      { name: "Sharif", startMs: 170_000, endMs: 172_000 },
+    ]);
+    expect(pieces.map((p) => [p.name, p.words.length])).toEqual([
+      ["Shihab", 7],
+      ["Sharif", 6],
+    ]);
   });
 
   it("splits a Bangla line that has no word times where the captions change speaker", async () => {
