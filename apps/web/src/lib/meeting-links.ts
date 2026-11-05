@@ -1,7 +1,8 @@
 export type MeetingPlatform = "google_meet" | "microsoft_teams" | "zoom" | "webex" | "other";
 
 const PATTERNS: Array<{ platform: Exclude<MeetingPlatform, "other">; re: RegExp }> = [
-  { platform: "google_meet", re: /https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\?[^\s<>"']*)?/i },
+  // Meet also hands out links with a path before the code, like meet.google.com/meet/abc-defg-hij.
+  { platform: "google_meet", re: /https:\/\/meet\.google\.com\/(?:[\w-]+\/)?[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\?[^\s<>"']*)?/i },
   {
     platform: "microsoft_teams",
     re: /https:\/\/teams\.(?:microsoft|live)\.com\/(?:l\/meetup-join|meet)\/[^\s<>"']+/i,
@@ -23,7 +24,8 @@ export function detectMeetingLink(...texts: Array<string | null | undefined>): D
     for (const { platform, re } of PATTERNS) {
       const match = re.exec(text);
       if (match && (!best || match.index < best.index)) {
-        best = { index: match.index, found: { url: trimTrailingPunctuation(match[0]), platform } };
+        const url = trimTrailingPunctuation(match[0]);
+        best = { index: match.index, found: { url: platform === "google_meet" ? plainMeetLink(url) : url, platform } };
       }
     }
     if (best) return best.found;
@@ -48,11 +50,16 @@ export function platformForUrl(url: string): MeetingPlatform {
   return detectMeetingLink(url)?.platform ?? "other";
 }
 
+/** Drops a path before the code ("meet.google.com/meet/abc-defg-hij"), keeping the query. */
+function plainMeetLink(url: string) {
+  return url.replace(/(meet\.google\.com\/)[\w-]+\/(?=[a-z]{3}-[a-z]{4}-[a-z]{3}\b)/i, "$1");
+}
+
 function trimTrailingPunctuation(url: string) {
   return url.replace(/[).,;]+$/, "");
 }
 
 /** "abc-defg-hij" for any form of a Meet link (query string, case, trailing slash), else null. */
 export function meetCode(url: string | null | undefined): string | null {
-  return url?.match(/meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})\b/i)?.[1]?.toLowerCase() ?? null;
+  return url?.match(/meet\.google\.com\/(?:[\w-]+\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})\b/i)?.[1]?.toLowerCase() ?? null;
 }

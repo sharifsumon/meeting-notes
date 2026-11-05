@@ -66,3 +66,15 @@ describe("completeMeetingLink", () => {
     expect(detectMeetingLink(completeMeetingLink("Transcom kickoff"))).toBeNull();
   });
 });
+
+describe("Meet links with a path before the code", () => {
+  it("accepts meet.google.com/meet/<code>", async () => {
+    const { completeMeetingLink } = await import("./meeting-links");
+    expect(detectMeetingLink(completeMeetingLink("https://meet.google.com/meet/txq-gdon-kyg?authuser=0"))).toEqual({
+      url: "https://meet.google.com/txq-gdon-kyg?authuser=0",
+      platform: "google_meet",
+    });
+    expect(meetCode("https://meet.google.com/meet/txq-gdon-kyg?authuser=0")).toBe("txq-gdon-kyg");
+    expect(detectMeetingLink("https://meet.google.com/abc-defg-hij?hs=122")?.url).toBe("https://meet.google.com/abc-defg-hij?hs=122");
+  });
+});
