@@ -99,6 +99,30 @@ describe("deepgram with Whisper", () => {
   });
 });
 
+describe("deepgramSegments word voices", () => {
+  it("splits off a reply Deepgram heard in another voice at the start of a line", async () => {
+    const { deepgramSegments } = await import("./transcribe");
+    const w = (word: string, start: number, speaker: number) => ({ word, start, end: start + 0.3, speaker });
+    const segments = deepgramSegments({
+      results: {
+        utterances: [
+          {
+            start: 90.9,
+            end: 94.2,
+            transcript: "হ্যাঁ, সমস্যা নাই। তোমার হচ্ছে এই তিনটা।",
+            speaker: 0,
+            words: [w("হ্যাঁ,", 90.9, 1), w("সমস্যা", 91.4, 1), w("নাই।", 91.8, 1), w("তোমার", 92.4, 0), w("হচ্ছে", 92.8, 0), w("এই", 93.2, 0), w("তিনটা।", 93.6, 0)],
+          },
+        ],
+      },
+    });
+    expect(segments.map((s) => [s.speaker, s.text])).toEqual([
+      ["Speaker 2", "হ্যাঁ, সমস্যা নাই।"],
+      ["Speaker 1", "তোমার হচ্ছে এই তিনটা।"],
+    ]);
+  });
+});
+
 describe("nameSpeakers", () => {
   const seg = (speaker: string, startMs: number, endMs: number) => ({ speaker, startMs, endMs, text: "x" });
 
@@ -204,6 +228,24 @@ describe("nameSpeakers", () => {
     expect(named.map((s) => s.speaker)).toEqual(["Shihab Bhuiyan", "Mohammed Shariful Islam"]);
     expect(named.map((s) => s.text).join(" ")).toBe(text);
     expect(named[1]!.startMs).toBeGreaterThan(165_000);
+  });
+
+  it("gives a short reply in another voice to its speaker inside someone's long caption block", async () => {
+    const { nameSpeakers } = await import("./transcribe");
+    // Like the MyPeople scrum: one 60-second caption block for Sharif, with Jehan's "ok" inside it.
+    const named = nameSpeakers(
+      [
+        { speaker: "Speaker 2", startMs: 10_000, endMs: 20_000, text: "a b c d" },
+        { speaker: "Speaker 1", startMs: 30_000, endMs: 60_000, text: "e f g h" },
+        { speaker: "Speaker 2", startMs: 61_000, endMs: 62_000, text: "ok" },
+        { speaker: "Speaker 1", startMs: 62_500, endMs: 90_000, text: "i j k l" },
+      ],
+      [
+        { name: "Jehan", startMs: 9_000, endMs: 21_000 },
+        { name: "Sharif", startMs: 29_000, endMs: 91_000 },
+      ],
+    );
+    expect(named.map((s) => s.speaker)).toEqual(["Jehan", "Sharif", "Jehan", "Sharif"]);
   });
 
   it("leaves labels alone without captions", async () => {

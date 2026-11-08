@@ -26,7 +26,7 @@ type DeepgramResponse = {
       transcript: string;
       speaker?: number;
       confidence?: number;
-      words?: { word: string; punctuated_word?: string; start: number; end: number }[];
+      words?: { word: string; punctuated_word?: string; start: number; end: number; speaker?: number }[];
     }[];
   };
 };
@@ -35,21 +35,56 @@ type DeepgramResponse = {
 export type TimedWord = { text: string; startMs: number; endMs: number };
 type TimedSegment = TranscriptSegment & { words?: TimedWord[] };
 
-/** Parses Deepgram's pre-recorded response (with utterances and diarization) into our segments. */
+/** Fewer words than this at a line's edge in another voice are noise, not a reply. */
+const MIN_EDGE_WORDS = 3;
+
+/**
+ * Parses Deepgram's pre-recorded response (with utterances and diarization) into our segments. Deepgram
+ * can fold a quick reply into the next person's line while still hearing it in the other voice word by
+ * word, so a run of words in another voice at the start or end of a line becomes its own line.
+ */
 export function deepgramSegments(body: DeepgramResponse): TimedSegment[] {
   return (body.results?.utterances ?? [])
     .filter((u) => u.transcript.trim())
-    .map((u) => ({
-      speaker: `Speaker ${(u.speaker ?? 0) + 1}`,
-      startMs: Math.round(u.start * 1000),
-      endMs: Math.round(u.end * 1000),
-      text: u.transcript.trim(),
-      words: u.words?.map((w) => ({
+    .flatMap((u): TimedSegment[] => {
+      const label = u.speaker ?? 0;
+      const words = (u.words ?? []).map((w) => ({
         text: w.punctuated_word ?? w.word,
         startMs: Math.round(w.start * 1000),
         endMs: Math.round(w.end * 1000),
-      })),
-    }));
+        speaker: w.speaker ?? label,
+      }));
+      const whole: TimedSegment = {
+        speaker: `Speaker ${label + 1}`,
+        startMs: Math.round(u.start * 1000),
+        endMs: Math.round(u.end * 1000),
+        text: u.transcript.trim(),
+        words: u.words ? words.map(({ speaker: _s, ...w }) => w) : undefined,
+      };
+      const edge = (from: number, step: 1 | -1) => {
+        const voice = words[from]?.speaker;
+        if (voice === undefined || voice === label) return 0;
+        let n = 0;
+        while (n < words.length && words[from + n * step]!.speaker === voice) n++;
+        return n >= MIN_EDGE_WORDS && n < words.length ? n : 0;
+      };
+      const head = edge(0, 1);
+      const tail = edge(words.length - 1, -1);
+      if (!head && !tail) return [whole];
+      const piece = (ws: typeof words, voice: number): TimedSegment => ({
+        speaker: `Speaker ${voice + 1}`,
+        startMs: ws[0]!.startMs,
+        endMs: ws[ws.length - 1]!.endMs,
+        text: ws.map((w) => w.text).join(" "),
+        words: ws.map(({ speaker: _s, ...w }) => w),
+      });
+      const middle = words.slice(head, words.length - tail);
+      return [
+        ...(head ? [piece(words.slice(0, head), words[0]!.speaker)] : []),
+        ...(middle.length ? [piece(middle, label)] : []),
+        ...(tail ? [piece(words.slice(words.length - tail), words[words.length - 1]!.speaker)] : []),
+      ];
+    });
 }
 
 type Attempt = {
@@ -179,6 +214,32 @@ export function nameSpeakers(segments: TimedSegment[], timeline: SpeakerTurn[]):
     names.set(p.label, p.name);
     used.add(p.name);
   }
+  // Meet can keep one person's caption block up through someone else's short reply. The voice most
+  // heard during a caption turn is that person's; a line in a different voice that belongs to someone
+  // else is theirs, even inside the block.
+  const voiceOf = new Map<SpeakerTurn, string>();
+  for (const turn of timeline) {
+    const byLabel = new Map<string, number>();
+    for (const seg of segments) {
+      const ms = Math.min(seg.endMs, turn.endMs) - Math.max(seg.startMs, turn.startMs);
+      if (ms > 0) byLabel.set(seg.speaker, (byLabel.get(seg.speaker) ?? 0) + ms);
+    }
+    const top = [...byLabel].sort((a, b) => b[1] - a[1])[0];
+    if (top) voiceOf.set(turn, top[0]);
+  }
+  const withVoice = (captioned: string, label: string, startMs: number, endMs: number) => {
+    const heard = names.get(label);
+    if (!heard || heard === captioned) return captioned;
+    const mid = (startMs + endMs) / 2;
+    let turn: SpeakerTurn | undefined;
+    for (const t of timeline) if (mid >= t.startMs && mid <= t.endMs && (!turn || t.startMs >= turn.startMs)) turn = t;
+    // In a gap between captions, the line was named after the caption around it.
+    turn ??=
+      [...timeline].sort((a, b) => a.startMs - b.startMs).find((t) => t.startMs > mid && t.name === captioned) ??
+      [...timeline].sort((a, b) => b.endMs - a.endMs).find((t) => t.endMs < mid && t.name === captioned);
+    return turn && turn.name === captioned && voiceOf.get(turn) !== label ? heard : captioned;
+  };
+
   // Diarization can hear two people as one voice and run a quick exchange into one line; the captions
   // name each stretch of words directly.
   return segments.flatMap((seg) => {
@@ -186,15 +247,16 @@ export function nameSpeakers(segments: TimedSegment[], timeline: SpeakerTurn[]):
     const words = seg.words?.length ? seg.words : estimateWords(seg);
     const pieces = words.length ? splitByCaptions(words, timeline) : [];
     if (pieces.length > 1) {
-      return pieces.map((p) => ({
-        speaker: p.name ?? fallback,
-        startMs: p.words[0]!.startMs,
-        endMs: p.words[p.words.length - 1]!.endMs,
-        text: p.words.map((w) => w.text).join(" "),
-      }));
+      return pieces.map((p) => {
+        const startMs = p.words[0]!.startMs;
+        const endMs = p.words[p.words.length - 1]!.endMs;
+        const speaker = p.name ? withVoice(p.name, seg.speaker, startMs, endMs) : fallback;
+        return { speaker, startMs, endMs, text: p.words.map((w) => w.text).join(" ") };
+      });
     }
     const { words: _words, ...line } = seg;
-    return [{ ...line, speaker: pieces[0]?.name ?? captionedName(seg, timeline) ?? fallback }];
+    const captioned = pieces[0]?.name ?? captionedName(seg, timeline);
+    return [{ ...line, speaker: captioned ? withVoice(captioned, seg.speaker, seg.startMs, seg.endMs) : fallback }];
   });
 }
 
