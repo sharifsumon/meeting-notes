@@ -154,3 +154,15 @@ describe("minutes", () => {
     expect(withAttendees({ ...base, minutes: undefined }, [], segs).minutes!.attendees).toEqual(["Speaker 2"]);
   });
 });
+
+describe("withFallback", () => {
+  it("writes the notes with the fallback when the first writer fails", async () => {
+    const { withFallback } = await import("./summarize");
+    const notes = { summary: "ok", keyPoints: [], decisions: [], actionItems: [] };
+    const slow = { name: "Gemini", summarize: async () => Promise.reject(new Error("TimeoutError")), translate: async () => Promise.reject(new Error("503")) };
+    const groq = { name: "Groq", summarize: async () => notes, translate: async () => notes };
+    const writer = withFallback(slow, groq);
+    expect(await writer.summarize({ segments: [] })).toBe(notes);
+    expect(await writer.translate(notes, "Bangla")).toBe(notes);
+  });
+});

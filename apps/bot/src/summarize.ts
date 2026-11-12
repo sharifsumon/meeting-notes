@@ -265,10 +265,11 @@ export function geminiNotes(apiKey: string, model: string): Summarizer {
           contents: [{ role: "user", parts: [{ text: user }] }],
           generationConfig: { temperature: 0.2, responseMimeType: "application/json", maxOutputTokens: 65_536 },
         }),
-        signal: AbortSignal.timeout(5 * 60_000),
+        // A short call's notes take seconds; past this Gemini is overloaded and Groq takes over.
+        signal: AbortSignal.timeout(2 * 60_000),
       });
-      if ((res.status === 429 || res.status >= 500) && attempt < 5) {
-        await new Promise((r) => setTimeout(r, Math.min(2 ** attempt * 5_000, 120_000)));
+      if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 2 ** attempt * 5_000));
         continue;
       }
       if (!res.ok) throw new Error(`Gemini returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -316,10 +317,30 @@ export function notesOn() {
   return Boolean((config.NOTES_PROVIDER === "gemini" && config.GEMINI_API_KEY) || config.GROQ_API_KEY);
 }
 
+/** Writes with `first`, and with `fallback` when it fails (Gemini overloaded or timing out). */
+export function withFallback(first: Summarizer, fallback: Summarizer): Summarizer {
+  const run = async <T>(what: string, a: () => Promise<T>, b: () => Promise<T>) => {
+    try {
+      return await a();
+    } catch (err) {
+      console.error(`[summarize] ${first.name} failed to ${what}, using ${fallback.name}: ${err}`);
+      return b();
+    }
+  };
+  return {
+    name: `${first.name}, ${fallback.name} if it fails`,
+    summarize: (input) => run("write notes", () => first.summarize(input), () => fallback.summarize(input)),
+    translate: (notes, language) => run("translate", () => first.translate(notes, language), () => fallback.translate(notes, language)),
+  };
+}
+
 /** The configured summarizer, or null when its key isn't set. `geminiKey` replaces the server's Gemini key. */
 export function summarizer(geminiKey = config.GEMINI_API_KEY): Summarizer | null {
   if (config.NOTES_PROVIDER === "gemini") {
-    if (geminiKey) return geminiNotes(geminiKey, config.GEMINI_MODEL);
+    if (geminiKey) {
+      const gemini = geminiNotes(geminiKey, config.GEMINI_MODEL);
+      return config.GROQ_API_KEY ? withFallback(gemini, groq(config.GROQ_API_KEY, config.GROQ_MODEL ?? DEFAULT_GROQ_MODEL)) : gemini;
+    }
     console.error("[summarize] NOTES_PROVIDER=gemini needs GEMINI_API_KEY; using Groq");
   }
   return config.GROQ_API_KEY ? groq(config.GROQ_API_KEY, config.GROQ_MODEL ?? DEFAULT_GROQ_MODEL) : null;
